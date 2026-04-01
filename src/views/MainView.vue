@@ -3,7 +3,7 @@
     <div class="main-container">
       <div class="header">
         <div class="logo">
-          <div class="logo-icon">🔥</div>
+          <div class="logo-icon" aria-hidden="true">🔥</div>
           <h1>森林火灾检测系统</h1>
         </div>
         <p class="subtitle">利用AI技术实时检测森林火灾，保护生态环境</p>
@@ -11,7 +11,7 @@
       
       <div class="upload-section">
         <div class="upload-area" @click="triggerFileUpload">
-          <div class="upload-icon">📁</div>
+          <div class="upload-icon" aria-hidden="true">📁</div>
           <div class="upload-text">
             <p>点击上传图片或视频</p>
             <p class="upload-hint">支持JPG、PNG、MP4等格式</p>
@@ -25,22 +25,22 @@
           />
         </div>
         <div v-if="selectedFile" class="file-info">
-          <div class="file-icon">📄</div>
+          <div class="file-icon" aria-hidden="true">📄</div>
           <div class="file-details">
             <p class="file-name">{{ selectedFile.name }}</p>
             <p class="file-size">{{ formatFileSize(selectedFile.size) }}</p>
           </div>
-          <button class="remove-file" @click="removeFile">×</button>
+          <button class="remove-file" @click="removeFile" aria-label="移除文件">×</button>
         </div>
       </div>
       
       <div class="button-section">
         <button class="detect-btn" @click="detectFire" :disabled="!selectedFile">
-          <span class="btn-icon">🔍</span>
+          <span class="btn-icon" aria-hidden="true">🔍</span>
           开始检测
         </button>
         <button class="map-btn" @click="goToMap">
-          <span class="btn-icon">🗺️</span>
+          <span class="btn-icon" aria-hidden="true">🗺️</span>
           直接进入地图
         </button>
       </div>
@@ -91,7 +91,7 @@
           </div>
           <div class="result-actions">
             <button class="map-btn" @click="goToMap">
-              <span class="btn-icon">🗺️</span>
+              <span class="btn-icon" aria-hidden="true">🗺️</span>
               查看地图
             </button>
             <button class="retry-btn" @click="resetDetection">
@@ -253,22 +253,47 @@ const removeFile = () => {
 .main {
   width: 100vw;
   height: 100vh;
-  background: linear-gradient(135deg, #2c3e50 0%, #4a6b8a 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  padding: 28px 16px;
+  position: relative;
 }
 
 .main-container {
-  background: white;
-  padding: 40px;
-  border-radius: 16px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+  background: var(--panel);
+  padding: 34px 34px 30px;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--stroke);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   text-align: center;
-  max-width: 550px;
+  max-width: 640px;
   width: 90%;
-  animation: fadeIn 0.5s ease-in-out;
+  animation: fadeIn 0.5s var(--ease);
+  position: relative;
+  overflow: hidden;
+}
+
+.main-container::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  background: radial-gradient(800px 240px at 50% 0%, rgba(32, 214, 255, 0.18), transparent 55%),
+    radial-gradient(500px 240px at 12% 20%, rgba(0, 255, 168, 0.10), transparent 60%);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.main-container::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--glow);
+  pointer-events: none;
+  opacity: 0.55;
 }
 
 @keyframes fadeIn {
@@ -284,6 +309,8 @@ const removeFile = () => {
 
 .header {
   margin-bottom: 30px;
+  position: relative;
+  z-index: 1;
 }
 
 .logo {
@@ -312,14 +339,15 @@ const removeFile = () => {
 }
 
 .logo h1 {
-  color: #2c3e50;
+  color: var(--text);
   margin: 0;
-  font-size: 28px;
-  font-weight: 600;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
 }
 
 .subtitle {
-  color: #7f8c8d;
+  color: var(--muted);
   margin: 0;
   font-size: 16px;
   line-height: 1.5;
@@ -327,47 +355,68 @@ const removeFile = () => {
 
 .upload-section {
   margin-bottom: 30px;
+  position: relative;
+  z-index: 1;
 }
 
 .upload-area {
-  border: 2px dashed #bdc3c7;
-  border-radius: 12px;
-  padding: 40px 20px;
+  border: 2px dashed rgba(32, 214, 255, 0.65);
+  border-radius: var(--radius-lg);
+  padding: 48px 20px;
   cursor: pointer;
-  transition: all 0.3s ease;
-  background: #f9f9f9;
+  transition: transform 180ms var(--ease), background 180ms var(--ease), border-color 180ms var(--ease);
+  background: rgba(6, 14, 22, 0.35);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.16) inset;
+  position: relative;
+  overflow: hidden;
 }
 
 .upload-area:hover {
-  border-color: #3498db;
-  background: #f0f8ff;
+  border-color: rgba(0, 255, 168, 0.85);
+  background: rgba(6, 16, 26, 0.52);
+  transform: translateY(-1px);
+}
+
+.upload-area::before {
+  content: "";
+  position: absolute;
+  inset: -40px;
+  background: radial-gradient(480px 180px at 50% 20%, rgba(32, 214, 255, 0.18), transparent 55%);
+  opacity: 0;
+  transition: opacity 240ms var(--ease);
+  pointer-events: none;
+}
+
+.upload-area:hover::before {
+  opacity: 1;
 }
 
 .upload-icon {
   font-size: 48px;
   margin-bottom: 20px;
-  color: #95a5a6;
+  color: rgba(160, 220, 240, 0.85);
 }
 
 .upload-text p {
   margin: 5px 0;
-  color: #555;
+  color: var(--text);
   font-size: 16px;
 }
 
 .upload-hint {
   font-size: 14px !important;
-  color: #95a5a6 !important;
+  color: var(--muted) !important;
 }
 
 .file-info {
   display: flex;
   align-items: center;
-  background: #f8f9fa;
-  border-radius: 8px;
+  background: rgba(6, 14, 22, 0.45);
+  border-radius: var(--radius-md);
   padding: 15px;
   margin-top: 15px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(32, 214, 255, 0.16);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
   animation: slideIn 0.3s ease-in-out;
 }
 
@@ -385,7 +434,7 @@ const removeFile = () => {
 .file-icon {
   font-size: 24px;
   margin-right: 15px;
-  color: #3498db;
+  color: var(--brand);
 }
 
 .file-details {
@@ -397,7 +446,7 @@ const removeFile = () => {
   margin: 0 0 5px 0;
   font-size: 14px;
   font-weight: 500;
-  color: #2c3e50;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -406,13 +455,13 @@ const removeFile = () => {
 .file-size {
   margin: 0;
   font-size: 12px;
-  color: #7f8c8d;
+  color: var(--muted);
 }
 
 .remove-file {
-  background: #e74c3c;
+  background: rgba(255, 77, 79, 0.12);
   color: white;
-  border: none;
+  border: 1px solid rgba(255, 77, 79, 0.35);
   border-radius: 50%;
   width: 24px;
   height: 24px;
@@ -423,7 +472,7 @@ const removeFile = () => {
 }
 
 .remove-file:hover {
-  background: #c0392b;
+  background: rgba(255, 77, 79, 0.22);
 }
 
 .button-section {
@@ -432,6 +481,8 @@ const removeFile = () => {
   justify-content: center;
   margin-bottom: 30px;
   flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
 }
 
 .detect-btn,
@@ -440,12 +491,12 @@ const removeFile = () => {
   align-items: center;
   justify-content: center;
   padding: 14px 24px;
-  border: none;
-  border-radius: 8px;
+  border-radius: 12px;
   cursor: pointer;
   font-size: 16px;
   font-weight: 500;
-  transition: all 0.3s ease;
+  transition: transform 180ms var(--ease), box-shadow 180ms var(--ease), border-color 180ms var(--ease),
+    background 180ms var(--ease), opacity 180ms var(--ease);
   min-width: 150px;
 }
 
@@ -455,44 +506,49 @@ const removeFile = () => {
 }
 
 .detect-btn {
-  background: #e74c3c;
-  color: white;
-  box-shadow: 0 4px 12px rgba(231, 76, 60, 0.3);
+  background: rgba(8, 20, 30, 0.55);
+  color: var(--muted);
+  border: 1px solid rgba(32, 214, 255, 0.24);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.08) inset;
 }
 
 .detect-btn:hover:not(:disabled) {
-  background: #c0392b;
+  background: rgba(8, 24, 36, 0.75);
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(231, 76, 60, 0.4);
+  border-color: rgba(32, 214, 255, 0.42);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.14) inset, 0 14px 40px rgba(0, 0, 0, 0.35);
 }
 
 .detect-btn:disabled {
-  background: #bdc3c7;
+  opacity: 0.45;
   cursor: not-allowed;
   box-shadow: none;
 }
 
 .map-btn {
-  background: #27ae60;
-  color: white;
-  box-shadow: 0 4px 12px rgba(39, 174, 96, 0.3);
+  background: linear-gradient(180deg, rgba(32, 214, 255, 0.22), rgba(32, 214, 255, 0.14));
+  color: var(--text);
+  border: 1px solid rgba(32, 214, 255, 0.65);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.22) inset, 0 0 34px rgba(32, 214, 255, 0.22);
 }
 
 .map-btn:hover {
-  background: #229954;
+  background: linear-gradient(180deg, rgba(0, 255, 168, 0.22), rgba(32, 214, 255, 0.12));
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(39, 174, 96, 0.4);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.25) inset, 0 0 44px rgba(0, 255, 168, 0.18);
 }
 
 .loading {
   margin-top: 30px;
+  position: relative;
+  z-index: 1;
 }
 
 .loading-spinner {
   width: 50px;
   height: 50px;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #3498db;
+  border: 3px solid rgba(160, 220, 240, 0.18);
+  border-top: 3px solid rgba(32, 214, 255, 0.85);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin: 0 auto 15px;
@@ -504,7 +560,7 @@ const removeFile = () => {
 }
 
 .loading p {
-  color: #555;
+  color: var(--muted);
   font-size: 16px;
   margin: 0;
 }
@@ -512,8 +568,10 @@ const removeFile = () => {
 .result {
   margin-top: 30px;
   padding: 30px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   animation: fadeIn 0.5s ease-in-out;
+  position: relative;
+  z-index: 1;
 }
 
 .result-fire {
@@ -533,13 +591,13 @@ const removeFile = () => {
 
 .result h3 {
   margin: 0 0 15px 0;
-  color: #2c3e50;
+  color: var(--text);
   font-size: 20px;
 }
 
 .result p {
   margin: 0 0 20px 0;
-  color: #555;
+  color: var(--muted);
   font-size: 16px;
 }
 
@@ -570,37 +628,39 @@ const removeFile = () => {
 
 .retry-btn {
   margin-top: 20px;
-  background: #3498db;
+  background: rgba(8, 20, 30, 0.55);
   color: white;
-  border: none;
+  border: 1px solid rgba(32, 214, 255, 0.25);
   padding: 10px 20px;
-  border-radius: 6px;
+  border-radius: 12px;
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
-  transition: all 0.3s ease;
-  box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+  transition: transform 180ms var(--ease), box-shadow 180ms var(--ease), border-color 180ms var(--ease),
+    background 180ms var(--ease);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.08) inset;
 }
 
 .retry-btn:hover {
-  background: #2980b9;
+  background: rgba(8, 24, 36, 0.75);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
+  border-color: rgba(32, 214, 255, 0.42);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.14) inset, 0 14px 40px rgba(0, 0, 0, 0.35);
 }
 
 .result-success {
-  background: linear-gradient(135deg, rgba(52, 152, 219, 0.1), rgba(41, 128, 185, 0.1));
-  border: 1px solid rgba(52, 152, 219, 0.3);
+  background: rgba(6, 14, 22, 0.35);
+  border: 1px solid rgba(32, 214, 255, 0.22);
   padding: 30px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   animation: fadeIn 0.5s ease-in-out;
 }
 
 .result-error {
-  background: linear-gradient(135deg, rgba(231, 76, 60, 0.1), rgba(192, 57, 43, 0.1));
-  border: 1px solid rgba(231, 76, 60, 0.3);
+  background: rgba(26, 10, 14, 0.35);
+  border: 1px solid rgba(255, 77, 79, 0.25);
   padding: 30px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   animation: fadeIn 0.5s ease-in-out;
 }
 
@@ -615,10 +675,11 @@ const removeFile = () => {
 
 .result-details {
   margin: 20px 0;
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(6, 14, 22, 0.32);
   padding: 15px;
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(32, 214, 255, 0.14);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
 }
 
 .detail-item {
@@ -626,7 +687,7 @@ const removeFile = () => {
   justify-content: space-between;
   margin-bottom: 10px;
   padding-bottom: 10px;
-  border-bottom: 1px solid #ecf0f1;
+  border-bottom: 1px solid rgba(160, 220, 240, 0.12);
 }
 
 .detail-item:last-child {
@@ -636,12 +697,12 @@ const removeFile = () => {
 }
 
 .detail-label {
-  color: #7f8c8d;
+  color: var(--muted);
   font-weight: 500;
 }
 
 .detail-value {
-  color: #2c3e50;
+  color: var(--text);
   font-weight: 600;
 }
 
@@ -666,16 +727,17 @@ const removeFile = () => {
 
 .output-file h4 {
   margin: 0 0 15px 0;
-  color: #2c3e50;
+  color: var(--text);
   font-size: 16px;
 }
 
 .video-container,
 .image-container {
-  background: #f8f9fa;
+  background: rgba(6, 14, 22, 0.32);
   border-radius: 8px;
   padding: 15px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(32, 214, 255, 0.14);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -699,7 +761,7 @@ const removeFile = () => {
 /* 响应式设计 */
 @media (max-width: 480px) {
   .main-container {
-    padding: 30px 20px;
+    padding: 26px 18px;
   }
   
   .logo h1 {
@@ -707,7 +769,7 @@ const removeFile = () => {
   }
   
   .upload-area {
-    padding: 30px 15px;
+    padding: 36px 15px;
   }
   
   .button-section {

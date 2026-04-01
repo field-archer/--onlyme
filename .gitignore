@@ -1,8 +1,14 @@
 #人写的
-.trae/*
+.trae/
+.cursor/
 .env
 .npm-cache
-dist
+dist/
+__pycache__/
+
+
+uploads/*
+!uploads/.gitkeep
 
 
 

@@ -1,20 +1,23 @@
 <template>
   <div class="home">
-    <div class="map-header">
-      <div class="header-top">
-        <div class="logo">
-          <div class="logo-icon">🔥</div>
-          <h1>森林火灾检测系统</h1>
+    <aside class="side-panel">
+      <div class="panel-header">
+        <div class="brand">
+          <div class="brand-icon" aria-hidden="true">🔥</div>
+          <div class="brand-text">
+            <div class="brand-title">森林火灾检测系统</div>
+            <div class="brand-subtitle">实时地图监控与定位</div>
+          </div>
         </div>
         <button class="back-btn" @click="goToMain">
-          <span class="btn-icon">🏠</span>
+          <span class="btn-icon" aria-hidden="true">🏠</span>
           返回主页
         </button>
       </div>
-      <p class="subtitle">实时地图监控与定位</p>
+
       <div class="upload-section">
         <div class="upload-area" @click="triggerFileUpload">
-          <div class="upload-icon">📁</div>
+          <div class="upload-icon" aria-hidden="true">📁</div>
           <span>上传图片/视频</span>
           <input 
             type="file" 
@@ -25,25 +28,26 @@
           />
         </div>
         <div v-if="selectedFile" class="file-info">
-          <div class="file-icon">📄</div>
+          <div class="file-icon" aria-hidden="true">📄</div>
           <div class="file-details">
             <p class="file-name">{{ selectedFile.name }}</p>
             <p class="file-size">{{ formatFileSize(selectedFile.size) }}</p>
           </div>
-          <button class="remove-file" @click="removeFile">×</button>
+          <button class="remove-file" @click="removeFile" aria-label="移除文件">×</button>
         </div>
       </div>
+
       <div class="location-section">
         <button class="location-select-btn" @click="enableLocationSelect" :disabled="!isMapLoaded">
-          <span class="btn-icon">📍</span>
+          <span class="btn-icon" aria-hidden="true">📍</span>
           选择地点
         </button>
         <button class="confirm-btn" @click="confirmFireLocation" :disabled="!selectedLocation">
-          <span class="btn-icon">✅</span>
+          <span class="btn-icon" aria-hidden="true">✅</span>
           确认火灾位置
         </button>
         <button class="clear-btn" @click="clearFireMarkers" :disabled="markers.length === 0">
-          <span class="btn-icon">🗑️</span>
+          <span class="btn-icon" aria-hidden="true">🗑️</span>
           清除标记
         </button>
       </div>
@@ -59,10 +63,17 @@
           <span class="status-value">{{ markers.length }}</span>
         </div>
       </div>
-    </div>
+      <div class="panel-footer">
+        <div class="chip">
+          <span class="dot" :class="{ ok: isMapLoaded, warn: !isMapLoaded }"></span>
+          <span>{{ isMapLoaded ? '地图已就绪' : '地图加载中' }}</span>
+        </div>
+      </div>
+    </aside>
+
     <div ref="mapContainer" class="map-container"></div>
     <button class="location-btn" @click="locateMe" :disabled="!isMapLoaded">
-      <span class="btn-icon">📍</span>
+      <span class="btn-icon" aria-hidden="true">📍</span>
     </button>
     <div v-if="isLocationSelecting" class="selecting-overlay">
       <div class="selecting-hint">
@@ -279,21 +290,28 @@ onMounted(() => {
   width: 100%;
   height: 100%;
   position: relative;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: transparent;
 }
 
-.map-header {
+.side-panel {
   position: absolute;
-  top: 20px;
-  left: 20px;
-  background: rgba(255, 255, 255, 0.95);
-  padding: 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  top: 16px;
+  left: 16px;
+  bottom: 16px;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  background: var(--panel-2);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   z-index: 100;
-  min-width: 320px;
-  max-width: 400px;
-  animation: slideInLeft 0.5s ease-in-out;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  overflow: hidden;
+  animation: slideInLeft 0.5s var(--ease);
 }
 
 @keyframes slideInLeft {
@@ -307,21 +325,34 @@ onMounted(() => {
   }
 }
 
-.header-top {
+.side-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--glow);
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.panel-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 15px;
+  align-items: flex-start;
+  gap: 12px;
+  position: relative;
+  z-index: 1;
 }
 
-.logo {
+.brand {
   display: flex;
   align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
-.logo-icon {
-  font-size: 24px;
-  margin-right: 10px;
+.brand-icon {
+  font-size: 22px;
   animation: pulse 2s infinite;
 }
 
@@ -337,38 +368,47 @@ onMounted(() => {
   }
 }
 
-.map-header h1 {
-  margin: 0;
-  font-size: 20px;
-  color: #2c3e50;
-  font-weight: 600;
+.brand-text {
+  min-width: 0;
 }
 
-.subtitle {
-  margin: 0 0 20px 0;
-  font-size: 14px;
-  color: #7f8c8d;
-  line-height: 1.4;
+.brand-title {
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.brand-subtitle {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
 }
 
 .back-btn {
   display: flex;
   align-items: center;
-  background: #34495e;
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
+  background: rgba(8, 24, 36, 0.6);
+  color: var(--text);
+  border: 1px solid rgba(32, 214, 255, 0.28);
+  padding: 8px 12px;
+  border-radius: 12px;
   cursor: pointer;
   font-size: 14px;
-  transition: all 0.3s ease;
-  box-shadow: 0 2px 8px rgba(52, 73, 94, 0.3);
+  transition: transform 180ms var(--ease), box-shadow 180ms var(--ease), border-color 180ms var(--ease),
+    background 180ms var(--ease);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.08) inset;
+  flex: 0 0 auto;
 }
 
 .back-btn:hover {
-  background: #2c3e50;
+  background: rgba(8, 24, 36, 0.8);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(52, 73, 94, 0.4);
+  border-color: rgba(32, 214, 255, 0.42);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.14) inset, 0 14px 40px rgba(0, 0, 0, 0.35);
 }
 
 .btn-icon {
@@ -377,34 +417,38 @@ onMounted(() => {
 }
 
 .upload-section {
-  margin-bottom: 20px;
+  margin-top: 14px;
+  margin-bottom: 16px;
+  position: relative;
+  z-index: 1;
 }
 
 .upload-area {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f8f9fa;
-  border: 2px dashed #bdc3c7;
-  border-radius: 8px;
+  background: rgba(6, 14, 22, 0.35);
+  border: 2px dashed rgba(32, 214, 255, 0.55);
+  border-radius: var(--radius-lg);
   padding: 12px 20px;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: transform 180ms var(--ease), background 180ms var(--ease), border-color 180ms var(--ease);
   gap: 10px;
 }
 
 .upload-area:hover {
-  border-color: #3498db;
-  background: #f0f8ff;
+  border-color: rgba(0, 255, 168, 0.75);
+  background: rgba(6, 16, 26, 0.52);
+  transform: translateY(-1px);
 }
 
 .upload-icon {
   font-size: 18px;
-  color: #95a5a6;
+  color: rgba(160, 220, 240, 0.85);
 }
 
 .upload-area span {
-  color: #555;
+  color: var(--text);
   font-size: 14px;
   font-weight: 500;
 }
@@ -412,11 +456,12 @@ onMounted(() => {
 .file-info {
   display: flex;
   align-items: center;
-  background: #f8f9fa;
-  border-radius: 8px;
+  background: rgba(6, 14, 22, 0.45);
+  border-radius: var(--radius-md);
   padding: 12px;
   margin-top: 10px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(32, 214, 255, 0.14);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
   animation: slideIn 0.3s ease-in-out;
 }
 
@@ -434,7 +479,7 @@ onMounted(() => {
 .file-icon {
   font-size: 20px;
   margin-right: 12px;
-  color: #3498db;
+  color: var(--brand);
 }
 
 .file-details {
@@ -446,7 +491,7 @@ onMounted(() => {
   margin: 0 0 3px 0;
   font-size: 13px;
   font-weight: 500;
-  color: #2c3e50;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -455,13 +500,13 @@ onMounted(() => {
 .file-size {
   margin: 0;
   font-size: 11px;
-  color: #7f8c8d;
+  color: var(--muted);
 }
 
 .remove-file {
-  background: #e74c3c;
-  color: white;
-  border: none;
+  background: rgba(255, 77, 79, 0.12);
+  color: var(--text);
+  border: 1px solid rgba(255, 77, 79, 0.35);
   border-radius: 50%;
   width: 20px;
   height: 20px;
@@ -472,14 +517,16 @@ onMounted(() => {
 }
 
 .remove-file:hover {
-  background: #c0392b;
+  background: rgba(255, 77, 79, 0.22);
 }
 
 .location-section {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 15px;
+  margin-bottom: 14px;
+  position: relative;
+  z-index: 1;
 }
 
 .location-select-btn,
@@ -488,65 +535,64 @@ onMounted(() => {
   display: flex;
   align-items: center;
   padding: 10px 16px;
-  border: none;
-  border-radius: 6px;
+  border-radius: 12px;
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
-  transition: all 0.3s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: transform 180ms var(--ease), box-shadow 180ms var(--ease), border-color 180ms var(--ease),
+    background 180ms var(--ease), opacity 180ms var(--ease);
+  border: 1px solid rgba(32, 214, 255, 0.25);
+  background: rgba(8, 20, 30, 0.55);
+  color: var(--text);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.08) inset;
 }
 
 .location-select-btn {
-  background: #27ae60;
-  color: white;
-  box-shadow: 0 2px 8px rgba(39, 174, 96, 0.3);
+  border-color: rgba(0, 255, 168, 0.55);
 }
 
 .location-select-btn:hover:not(:disabled) {
-  background: #229954;
+  background: rgba(8, 24, 36, 0.75);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4);
+  box-shadow: 0 0 0 1px rgba(0, 255, 168, 0.18) inset, 0 16px 40px rgba(0, 0, 0, 0.35);
 }
 
 .location-select-btn:disabled {
-  background: #bdc3c7;
+  opacity: 0.45;
   cursor: not-allowed;
   box-shadow: none;
 }
 
 .confirm-btn {
-  background: #e74c3c;
-  color: white;
-  box-shadow: 0 2px 8px rgba(231, 76, 60, 0.3);
+  border-color: rgba(32, 214, 255, 0.65);
+  background: linear-gradient(180deg, rgba(32, 214, 255, 0.22), rgba(32, 214, 255, 0.12));
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.22) inset, 0 0 30px rgba(32, 214, 255, 0.18);
 }
 
 .confirm-btn:hover:not(:disabled) {
-  background: #c0392b;
+  background: linear-gradient(180deg, rgba(0, 255, 168, 0.18), rgba(32, 214, 255, 0.10));
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.25) inset, 0 0 44px rgba(0, 255, 168, 0.16);
 }
 
 .confirm-btn:disabled {
-  background: #bdc3c7;
+  opacity: 0.45;
   cursor: not-allowed;
   box-shadow: none;
 }
 
 .clear-btn {
-  background: #f39c12;
-  color: white;
-  box-shadow: 0 2px 8px rgba(243, 156, 18, 0.3);
+  border-color: rgba(255, 176, 32, 0.45);
 }
 
 .clear-btn:hover:not(:disabled) {
-  background: #e67e22;
+  background: rgba(8, 24, 36, 0.75);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(243, 156, 18, 0.4);
+  box-shadow: 0 0 0 1px rgba(255, 176, 32, 0.16) inset, 0 16px 40px rgba(0, 0, 0, 0.35);
 }
 
 .clear-btn:disabled {
-  background: #bdc3c7;
+  opacity: 0.45;
   cursor: not-allowed;
   box-shadow: none;
 }
@@ -556,7 +602,9 @@ onMounted(() => {
   gap: 15px;
   flex-wrap: wrap;
   padding-top: 15px;
-  border-top: 1px solid #ecf0f1;
+  border-top: 1px solid rgba(160, 220, 240, 0.14);
+  position: relative;
+  z-index: 1;
 }
 
 .status-item {
@@ -567,21 +615,58 @@ onMounted(() => {
 }
 
 .status-label {
-  color: #7f8c8d;
+  color: var(--muted);
   font-weight: 500;
 }
 
 .status-value {
-  color: #2c3e50;
+  color: var(--text);
   font-weight: 600;
 }
 
 .status-loaded {
-  color: #27ae60 !important;
+  color: var(--brand-2) !important;
 }
 
 .status-loading {
-  color: #f39c12 !important;
+  color: var(--warning) !important;
+}
+
+.panel-footer {
+  margin-top: auto;
+  padding-top: 14px;
+  position: relative;
+  z-index: 1;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(32, 214, 255, 0.22);
+  background: rgba(6, 14, 22, 0.32);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(160, 220, 240, 0.28);
+  box-shadow: 0 0 16px rgba(160, 220, 240, 0.12);
+}
+
+.dot.ok {
+  background: rgba(0, 255, 168, 0.72);
+  box-shadow: 0 0 18px rgba(0, 255, 168, 0.22);
+}
+
+.dot.warn {
+  background: rgba(255, 176, 32, 0.75);
+  box-shadow: 0 0 18px rgba(255, 176, 32, 0.20);
 }
 
 .map-container {
@@ -595,29 +680,31 @@ onMounted(() => {
   right: 30px;
   width: 55px;
   height: 55px;
-  background: white;
-  border: none;
+  background: rgba(6, 14, 22, 0.7);
+  border: 1px solid rgba(32, 214, 255, 0.45);
   border-radius: 50%;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.10) inset, 0 18px 50px rgba(0, 0, 0, 0.35);
   cursor: pointer;
   z-index: 100;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 22px;
-  color: #1e88e5;
-  transition: all 0.3s ease;
-  animation: fadeIn 0.5s ease-in-out;
+  color: var(--brand);
+  transition: transform 180ms var(--ease), box-shadow 180ms var(--ease), border-color 180ms var(--ease),
+    background 180ms var(--ease), opacity 180ms var(--ease);
+  animation: fadeIn 0.5s var(--ease);
 }
 
 .location-btn:hover:not(:disabled) {
-  background: #f8f9fa;
+  background: rgba(6, 16, 26, 0.82);
   transform: translateY(-3px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  border-color: rgba(0, 255, 168, 0.6);
+  box-shadow: 0 0 0 1px rgba(0, 255, 168, 0.14) inset, 0 22px 60px rgba(0, 0, 0, 0.38);
 }
 
 .location-btn:disabled {
-  background: #e0e0e0;
+  opacity: 0.45;
   cursor: not-allowed;
   box-shadow: none;
 }
@@ -638,11 +725,12 @@ onMounted(() => {
 }
 
 .selecting-hint {
-  background: rgba(255, 255, 255, 0.95);
+  background: rgba(6, 14, 22, 0.82);
   padding: 30px;
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   text-align: center;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(32, 214, 255, 0.18);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
   pointer-events: auto;
   animation: scaleIn 0.3s ease-in-out;
   min-width: 250px;
@@ -668,19 +756,18 @@ onMounted(() => {
 .selecting-hint p {
   margin: 0;
   font-size: 16px;
-  color: #2c3e50;
+  color: var(--text);
   font-weight: 500;
 }
 
 /* 响应式设计 */
 @media (max-width: 768px) {
-  .map-header {
-    min-width: 280px;
-    padding: 15px;
+  .side-panel {
+    width: 300px;
   }
   
-  .logo h1 {
-    font-size: 18px;
+  .brand-title {
+    font-size: 15px;
   }
   
   .location-section {
