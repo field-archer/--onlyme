@@ -9,10 +9,21 @@
             <div class="brand-subtitle">实时地图监控与定位</div>
           </div>
         </div>
-        <button class="back-btn" @click="goToMain">
-          <span class="btn-icon" aria-hidden="true">🏠</span>
-          返回主页
-        </button>
+        <div class="panel-header-aside">
+          <div class="panel-header-actions">
+            <button class="back-btn" @click="goToMain">
+              <span class="btn-icon" aria-hidden="true">🏠</span>
+              返回主页
+            </button>
+            <button v-if="user" type="button" class="logout-btn" @click="logoutAndHome">
+              退出登录
+            </button>
+          </div>
+          <div v-if="user" class="ranger-row">
+            <span class="ranger-label">护林员</span>
+            <span class="ranger-name">{{ user.username }}</span>
+          </div>
+        </div>
       </div>
 
       <div class="upload-section">
@@ -35,6 +46,43 @@
           </div>
           <button class="remove-file" @click="removeFile" aria-label="移除文件">×</button>
         </div>
+      </div>
+
+      <div class="search-section">
+        <div class="search-label">地名搜索</div>
+        <div class="search-row">
+          <input
+            v-model="searchKeyword"
+            type="search"
+            class="search-input"
+            placeholder="输入地名或 POI，回车搜索"
+            :disabled="!isMapLoaded || searchLoading"
+            enterkeyhint="search"
+            @keyup.enter="handlePlaceSearch"
+          />
+          <button
+            type="button"
+            class="search-submit-btn"
+            :disabled="!isMapLoaded || searchLoading"
+            @click="handlePlaceSearch"
+          >
+            {{ searchLoading ? '搜索中…' : '搜索' }}
+          </button>
+        </div>
+        <p v-if="searchMessage" class="search-message">{{ searchMessage }}</p>
+        <ul v-if="searchResults.length" class="search-results" role="listbox">
+          <li
+            v-for="(poi, idx) in searchResults"
+            :key="`${poi.id}-${idx}`"
+            class="search-result-item"
+            :class="{ 'is-active': selectedPoiId === `${poi.id}-${idx}` }"
+            role="option"
+            @click="selectSearchPoi(poi, idx)"
+          >
+            <div class="poi-name">{{ poi.name }}</div>
+            <div class="poi-addr">{{ poi.address || '地址不详' }}</div>
+          </li>
+        </ul>
       </div>
 
       <div class="location-section">
@@ -62,6 +110,10 @@
           <span class="status-label">火灾标记:</span>
           <span class="status-value">{{ markers.length }}</span>
         </div>
+        <div v-if="markersSyncing" class="status-item">
+          <span class="status-label">同步:</span>
+          <span class="status-value status-loading">正在拉取服务器标记…</span>
+        </div>
       </div>
       <div class="panel-footer">
         <div class="chip">
@@ -85,9 +137,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { useMap } from '../composables/useMap';
+import { useMap, type PlaceSearchPoiItem } from '../composables/useMap';
+import { useAuth } from '../composables/useAuth';
+import { createFireMarker, deleteFireMarker, listFireMarkers } from '../api/fireMarkers';
+import { ApiError } from '../api/client';
+import { lngLatInputToCoords } from '../utils/geo';
 
 // 路由实例
 const router = useRouter();
@@ -107,14 +163,98 @@ const isLocationSelecting = ref(false);
 let tempMarker: any = null;
 
 // 使用地图组合式函数
+const { token, user, logout } = useAuth();
+
 const {
   map,
   getCurrentLocation,
+  searchPlaces,
+  focusMapOn,
   addFireMarker,
+  collectServerMarkerIds,
   clearMarkers,
   markers,
   isMapLoaded
 } = useMap(mapContainer);
+
+const markersSyncing = ref(false);
+
+function createOnRemoteDelete() {
+  return async (id: number) => {
+    const t = token.value;
+    if (!t) throw new Error('未登录');
+    await deleteFireMarker(t, id);
+  };
+}
+
+function logoutAndHome() {
+  logout();
+  router.push('/');
+}
+
+const searchKeyword = ref('');
+const searchResults = ref<PlaceSearchPoiItem[]>([]);
+const searchLoading = ref(false);
+const searchMessage = ref('');
+const selectedPoiId = ref<string | null>(null);
+
+const resetSearchUi = () => {
+  searchKeyword.value = '';
+  searchResults.value = [];
+  searchMessage.value = '';
+  selectedPoiId.value = null;
+};
+
+const handlePlaceSearch = async () => {
+  if (!isMapLoaded.value) return;
+  const kw = searchKeyword.value.trim();
+  if (!kw) {
+    searchMessage.value = '请输入要搜索的地名';
+    searchResults.value = [];
+    return;
+  }
+  searchLoading.value = true;
+  searchMessage.value = '';
+  try {
+    const list = await searchPlaces(kw);
+    searchResults.value = list;
+    selectedPoiId.value = null;
+    if (list.length === 0) {
+      searchMessage.value = '未找到相关地点，可换个关键词或使用「选择地点」在图上点击';
+    }
+  } catch {
+    searchMessage.value = '搜索失败，请稍后重试';
+    searchResults.value = [];
+  } finally {
+    searchLoading.value = false;
+  }
+};
+
+/** 选中搜索结果：飞到该点预览（4b），并设待确认位置 */
+const selectSearchPoi = (poi: PlaceSearchPoiItem, idx: number) => {
+  if (!map.value) return;
+  const AMap = (window as any).AMap;
+  if (!AMap) return;
+
+  selectedPoiId.value = `${poi.id}-${idx}`;
+  selectedLocation.value = poi.location;
+  focusMapOn(poi.location);
+
+  if (tempMarker) {
+    tempMarker.remove();
+  }
+  tempMarker = new AMap.Marker({
+    position: poi.location,
+    map: map.value,
+    anchor: 'center',
+    offset: new AMap.Pixel(0, 0),
+    icon: new AMap.Icon({
+      size: new AMap.Size(30, 30),
+      image: 'https://a.amap.com/jsapi_demos/static/demo-center/icons/poi-marker-default.png',
+      imageSize: new AMap.Size(30, 30)
+    })
+  });
+};
 
 // 触发文件上传
 const triggerFileUpload = () => {
@@ -143,6 +283,7 @@ const enableLocationSelect = () => {
 // 处理地图点击
 const handleMapClick = (event: any) => {
   if (isLocationSelecting.value) {
+    selectedPoiId.value = null;
     selectedLocation.value = event.lnglat;
     // 移除之前的临时标记
     if (tempMarker) {
@@ -154,6 +295,8 @@ const handleMapClick = (event: any) => {
       tempMarker = new AMap.Marker({
         position: event.lnglat,
         map: map.value,
+        anchor: 'center',
+        offset: new AMap.Pixel(0, 0),
         icon: new AMap.Icon({
           size: new AMap.Size(30, 30),
           image: 'https://a.amap.com/jsapi_demos/static/demo-center/icons/poi-marker-default.png',
@@ -164,29 +307,60 @@ const handleMapClick = (event: any) => {
   }
 };
 
-// 确认火灾位置
-const confirmFireLocation = () => {
-  if (selectedLocation.value) {
-    isLocationSelecting.value = false;
-    // 移除临时标记
-    if (tempMarker) {
-      tempMarker.remove();
-      tempMarker = null;
+// 确认火灾位置（入库 + 地图展示，fire_count 与《前端对接》一致）
+const confirmFireLocation = async () => {
+  if (!selectedLocation.value) return;
+  const t = token.value;
+  if (!t) {
+    alert('请先登录');
+    router.push({ name: 'login', query: { redirect: route.fullPath } });
+    return;
+  }
+
+  isLocationSelecting.value = false;
+  if (tempMarker) {
+    tempMarker.remove();
+    tempMarker = null;
+  }
+  if (map.value) {
+    map.value.off('click', handleMapClick);
+  }
+
+  const [lng, lat] = lngLatInputToCoords(selectedLocation.value);
+  const fc = Math.max(
+    1,
+    parseInt(sessionStorage.getItem('forestfire_last_fire_count') || '1', 10)
+  );
+  const source = selectedPoiId.value ? 'place_search' : 'map_click';
+
+  try {
+    const created = await createFireMarker(t, {
+      longitude: lng,
+      latitude: lat,
+      fire_count: fc,
+      source
+    });
+    addFireMarker([lng, lat], {
+      serverId: created.id,
+      fireCount: created.fire_count,
+      markedAt: created.marked_at,
+      onRemoteDelete: createOnRemoteDelete()
+    });
+    alert('火灾位置已保存到服务器');
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 40100) {
+      logout();
+      router.push({ name: 'login', query: { redirect: route.fullPath } });
     }
-    // 移除地图点击事件监听
-    if (map.value) {
-      map.value.off('click', handleMapClick);
-    }
-    // 添加火灾标记和动画
-    addFireMarker(selectedLocation.value);
-    // 显示成功提示
-    alert('火灾位置已标记');
-    // 重置状态
-    selectedFile.value = null;
-    selectedLocation.value = null;
-    if (fileInput.value) {
-      fileInput.value.value = '';
-    }
+    alert(e instanceof Error ? e.message : '保存失败');
+    return;
+  }
+
+  resetSearchUi();
+  selectedFile.value = null;
+  selectedLocation.value = null;
+  if (fileInput.value) {
+    fileInput.value.value = '';
   }
 };
 
@@ -219,11 +393,23 @@ const goToMain = () => {
   }
   selectedLocation.value = null;
   selectedFile.value = null;
+  resetSearchUi();
   router.push('/');
 };
 
-// 清除所有火灾标记
-const clearFireMarkers = () => {
+// 清除地图上的全部火点，并删除服务器上已同步的记录
+const clearFireMarkers = async () => {
+  if (!confirm('确定清除全部火点？将同步删除服务器上已保存的标记。')) return;
+  const t = token.value;
+  if (!t) return;
+  const ids = collectServerMarkerIds();
+  for (const id of ids) {
+    try {
+      await deleteFireMarker(t, id);
+    } catch {
+      /* 单条失败仍继续 */
+    }
+  }
   clearMarkers();
 };
 
@@ -244,51 +430,88 @@ const removeFile = () => {
   }
 };
 
-// 监听地图加载状态，加载完成后检查是否需要自动标记和定位
 watch(isMapLoaded, (loaded) => {
-  if (loaded) {
-    // 自动更新定位
-    const updateLocation = async () => {
-      try {
-        const result = await getCurrentLocation();
-        const lnglat = result.position;
-        if (map.value) {
-          map.value.setCenter(lnglat);
-          map.value.setZoom(15);
+  if (!loaded) return;
+
+  const run = async () => {
+    markersSyncing.value = true;
+    try {
+      const t = token.value;
+      if (t) {
+        const { items } = await listFireMarkers(t, { page: 1, page_size: 100 });
+        clearMarkers();
+        const del = createOnRemoteDelete();
+        for (const it of items) {
+          addFireMarker([it.longitude, it.latitude], {
+            serverId: it.id,
+            fireCount: it.fire_count,
+            markedAt: it.marked_at,
+            onRemoteDelete: del
+          });
         }
-      } catch (error) {
-        console.error('自动定位失败:', error);
       }
-    };
-    
-    // 执行自动定位
-    updateLocation();
-    
-    // 检查是否需要自动标记火灾点
+    } catch (e) {
+      console.error('拉取火点标记失败:', e);
+      if (e instanceof ApiError && e.code === 40100) {
+        logout();
+        router.replace({ name: 'login', query: { redirect: route.fullPath } });
+      }
+    } finally {
+      markersSyncing.value = false;
+    }
+
+    try {
+      const result = await getCurrentLocation();
+      const lnglat = result.position;
+      if (map.value) {
+        map.value.setCenter(lnglat);
+        map.value.setZoom(15);
+      }
+    } catch (error) {
+      console.error('自动定位失败:', error);
+    }
+
     if (route.query.detect === 'true') {
-      // 延迟一点执行，确保地图完全就绪
-      setTimeout(() => {
-        getCurrentLocation().then(result => {
-          addFireMarker(result.position);
-        }).catch(error => {
-          console.error('获取位置失败:', error);
-        });
+      setTimeout(async () => {
+        try {
+          const t = token.value;
+          if (!t) return;
+          const result = await getCurrentLocation();
+          const [lng, lat] = lngLatInputToCoords(result.position);
+          const fc = Math.max(
+            1,
+            parseInt(sessionStorage.getItem('forestfire_last_fire_count') || '1', 10)
+          );
+          const created = await createFireMarker(t, {
+            longitude: lng,
+            latitude: lat,
+            fire_count: fc,
+            source: 'auto_detect'
+          });
+          addFireMarker([lng, lat], {
+            serverId: created.id,
+            fireCount: created.fire_count,
+            markedAt: created.marked_at,
+            onRemoteDelete: createOnRemoteDelete()
+          });
+        } catch (error) {
+          console.error('自动标记失败:', error);
+        }
       }, 500);
     }
-  }
-});
+  };
 
-// 组件挂载时的初始化
-onMounted(() => {
-  // 地图初始化已在useMap中处理
-  // 自动定位和标记功能已在watch中处理
+  void run();
 });
 </script>
 
 <style scoped>
 .home {
   width: 100%;
-  height: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
   position: relative;
   background: transparent;
 }
@@ -342,6 +565,59 @@ onMounted(() => {
   gap: 12px;
   position: relative;
   z-index: 1;
+}
+
+.panel-header-aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.panel-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.logout-btn {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid rgba(255, 77, 79, 0.35);
+  background: rgba(255, 77, 79, 0.1);
+  color: var(--text);
+  font-family: inherit;
+  transition: background 180ms var(--ease), border-color 180ms var(--ease);
+}
+
+.logout-btn:hover {
+  background: rgba(255, 77, 79, 0.18);
+  border-color: rgba(255, 77, 79, 0.5);
+}
+
+.ranger-row {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  line-height: 1.4;
+  max-width: 200px;
+}
+
+.ranger-label {
+  margin-right: 6px;
+  opacity: 0.85;
+}
+
+.ranger-name {
+  color: var(--brand);
+  font-weight: 600;
 }
 
 .brand {
@@ -414,6 +690,117 @@ onMounted(() => {
 .btn-icon {
   margin-right: 6px;
   font-size: 16px;
+}
+
+.search-section {
+  margin-bottom: 14px;
+  position: relative;
+  z-index: 1;
+}
+
+.search-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.search-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(32, 214, 255, 0.25);
+  background: rgba(8, 20, 30, 0.55);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 180ms var(--ease), box-shadow 180ms var(--ease);
+}
+
+.search-input:focus {
+  border-color: rgba(32, 214, 255, 0.5);
+  box-shadow: 0 0 0 2px rgba(32, 214, 255, 0.12);
+}
+
+.search-input::placeholder {
+  color: rgba(160, 200, 220, 0.45);
+}
+
+.search-submit-btn {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px solid rgba(32, 214, 255, 0.35);
+  background: rgba(12, 40, 56, 0.65);
+  color: var(--text);
+  transition: transform 180ms var(--ease), border-color 180ms var(--ease), opacity 180ms var(--ease);
+}
+
+.search-submit-btn:hover:not(:disabled) {
+  border-color: rgba(0, 255, 168, 0.55);
+  transform: translateY(-1px);
+}
+
+.search-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.search-message {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: rgba(255, 200, 120, 0.9);
+  line-height: 1.4;
+}
+
+.search-results {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  border-radius: 12px;
+  border: 1px solid rgba(32, 214, 255, 0.18);
+  background: rgba(6, 14, 22, 0.5);
+}
+
+.search-result-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(32, 214, 255, 0.08);
+  transition: background 160ms var(--ease);
+}
+
+.search-result-item:last-child {
+  border-bottom: none;
+}
+
+.search-result-item:hover,
+.search-result-item.is-active {
+  background: rgba(32, 214, 255, 0.12);
+}
+
+.poi-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.poi-addr {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .upload-section {

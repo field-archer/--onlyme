@@ -7,6 +7,14 @@
           <h1>森林火灾检测系统</h1>
         </div>
         <p class="subtitle">利用AI技术实时检测森林火灾，保护生态环境</p>
+        <div class="auth-links">
+          <template v-if="!isLoggedIn">
+            <RouterLink class="auth-link" to="/login">护林员登录</RouterLink>
+            <RouterLink class="auth-link" to="/register">护林员注册</RouterLink>
+          </template>
+          <span v-else class="auth-logged">已登录：{{ user?.username }}</span>
+          <RouterLink class="auth-link primary" to="/map">进入地图</RouterLink>
+        </div>
       </div>
       
       <div class="upload-section">
@@ -52,10 +60,10 @@
       
       <div v-if="detectionResult" class="result">
         <div v-if="detectionResult.code === 20000 && detectionResult.data" class="result-success">
-          <div class="result-icon" :class="detectionResult.data.fire_probability > 0.5 ? 'fire-icon' : 'no-fire-icon'">
-            {{ detectionResult.data.fire_probability > 0.5 ? '🔥' : '✅' }}
+          <div class="result-icon" :class="hasFireDetected ? 'fire-icon' : 'no-fire-icon'">
+            {{ hasFireDetected ? '🔥' : '✅' }}
           </div>
-          <h3>检测结果：{{ detectionResult.data.fire_probability > 0.5 ? '发现火灾' : '未发现火灾' }}</h3>
+          <h3>检测结果：{{ hasFireDetected ? '发现火灾' : '未发现火灾' }}</h3>
           <div class="result-details">
             <div class="detail-item">
               <span class="detail-label">火灾概率:</span>
@@ -63,13 +71,16 @@
             </div>
             <div class="detail-item">
               <span class="detail-label">风险等级:</span>
-              <span class="detail-value" :class="'risk-' + detectionResult.data.risk_level">
-                {{ detectionResult.data.risk_level === 'high' ? '高' : detectionResult.data.risk_level === 'medium' ? '中' : '低' }}
+              <span
+                class="detail-value"
+                :class="displayRiskLevel ? 'risk-' + displayRiskLevel : 'risk-none'"
+              >
+                {{ riskLevelDisplayText }}
               </span>
             </div>
             <div class="detail-item">
               <span class="detail-label">火焰数量:</span>
-              <span class="detail-value">{{ detectionResult.data.fire_count }}</span>
+              <span class="detail-value">{{ resolvedFireCount }}</span>
             </div>
             <div class="detail-item">
               <span class="detail-label">平均置信度:</span>
@@ -113,11 +124,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, computed } from 'vue';
+import { useRouter, RouterLink } from 'vue-router';
+import { API_BASE_URL } from '../config/api';
+import { useAuth } from '../composables/useAuth';
 
 // 路由实例
 const router = useRouter();
+const { user, isLoggedIn } = useAuth();
 // 文件输入引用
 const fileInput = ref<HTMLInputElement | null>(null);
 // 选中的文件
@@ -139,9 +153,6 @@ const handleFileUpload = (event: Event) => {
     detectionResult.value = null;
   }
 };
-
-// 后端API地址
-const API_BASE_URL = 'http://localhost:8000/api';
 
 // 检测结果类型
 type DetectionResult = {
@@ -184,6 +195,42 @@ const detectionResult = ref<DetectionResult | null>(null);
 // 分析后的文件URL
 const outputFileUrl = ref<string | null>(null);
 
+const successData = computed(() =>
+  detectionResult.value?.code === 20000 && detectionResult.value.data ? detectionResult.value.data : null
+);
+
+/** 与对接文档一致：取 API fire_count 与 detections 中 class 为 fire 的数量的较大值，避免漏计 */
+const resolvedFireCount = computed(() => {
+  const d = successData.value;
+  if (!d) return 0;
+  const byClass = d.detections.filter((x) => String(x.class).toLowerCase() === 'fire').length;
+  const n = Number(d.fire_count);
+  const fromApi = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+  return Math.max(fromApi, byClass);
+});
+
+/** 只要存在火焰检测即视为发现火灾（不依赖 fire_probability） */
+const hasFireDetected = computed(() => resolvedFireCount.value > 0);
+
+/**
+ * 风险等级仅由火焰数量决定（对接.md）：>5 高，3～5 中，1～2 低；无火为 null
+ */
+const displayRiskLevel = computed((): 'high' | 'medium' | 'low' | null => {
+  const c = resolvedFireCount.value;
+  if (c <= 0) return null;
+  if (c > 5) return 'high';
+  if (c >= 3) return 'medium';
+  return 'low';
+});
+
+const riskLevelDisplayText = computed(() => {
+  const lv = displayRiskLevel.value;
+  if (!lv) return '—';
+  if (lv === 'high') return '高';
+  if (lv === 'medium') return '中';
+  return '低';
+});
+
 // 上传文件到后端进行检测
 const detectFire = async () => {
   if (!selectedFile.value) return;
@@ -204,8 +251,14 @@ const detectFire = async () => {
     
     // 处理分析结果
     if (result.code === 20000 && result.data) {
-      // 使用base64编码显示处理后的文件
       outputFileUrl.value = `data:${result.data.file_type};base64,${result.data.file_base64}`;
+      const byClass = result.data.detections.filter(
+        (x) => String(x.class).toLowerCase() === 'fire'
+      ).length;
+      const n = Number(result.data.fire_count);
+      const fromApi = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+      const raw = Math.max(fromApi, byClass);
+      sessionStorage.setItem('forestfire_last_fire_count', String(Math.max(1, raw)));
     }
   } catch (error) {
     console.error('检测失败:', error);
@@ -251,18 +304,22 @@ const removeFile = () => {
 
 <style scoped>
 .main {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  max-width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 28px 16px;
+  justify-content: flex-start;
+  padding: 20px 16px max(32px, env(safe-area-inset-bottom, 0px));
   position: relative;
+  box-sizing: border-box;
 }
 
 .main-container {
   background: var(--panel);
-  padding: 34px 34px 30px;
+  padding: 28px 28px 26px;
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow);
   border: 1px solid var(--stroke);
@@ -270,10 +327,12 @@ const removeFile = () => {
   -webkit-backdrop-filter: blur(14px);
   text-align: center;
   max-width: 640px;
-  width: 90%;
+  width: min(100%, 640px);
+  flex-shrink: 0;
   animation: fadeIn 0.5s var(--ease);
   position: relative;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: visible;
 }
 
 .main-container::before {
@@ -308,7 +367,7 @@ const removeFile = () => {
 }
 
 .header {
-  margin-bottom: 30px;
+  margin-bottom: 22px;
   position: relative;
   z-index: 1;
 }
@@ -353,8 +412,46 @@ const removeFile = () => {
   line-height: 1.5;
 }
 
+.auth-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px 16px;
+  margin-top: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.auth-link {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--brand);
+  text-decoration: none;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(32, 214, 255, 0.35);
+  background: rgba(8, 20, 30, 0.4);
+  transition: border-color 180ms var(--ease), transform 180ms var(--ease);
+}
+
+.auth-link:hover {
+  border-color: rgba(32, 214, 255, 0.6);
+  transform: translateY(-1px);
+}
+
+.auth-link.primary {
+  border-color: rgba(0, 255, 168, 0.45);
+  background: linear-gradient(180deg, rgba(0, 255, 168, 0.12), rgba(32, 214, 255, 0.08));
+}
+
+.auth-logged {
+  font-size: 14px;
+  color: var(--muted);
+}
+
 .upload-section {
-  margin-bottom: 30px;
+  margin-bottom: 20px;
   position: relative;
   z-index: 1;
 }
@@ -362,7 +459,7 @@ const removeFile = () => {
 .upload-area {
   border: 2px dashed rgba(32, 214, 255, 0.65);
   border-radius: var(--radius-lg);
-  padding: 48px 20px;
+  padding: 36px 20px;
   cursor: pointer;
   transition: transform 180ms var(--ease), background 180ms var(--ease), border-color 180ms var(--ease);
   background: rgba(6, 14, 22, 0.35);
@@ -479,7 +576,7 @@ const removeFile = () => {
   display: flex;
   gap: 15px;
   justify-content: center;
-  margin-bottom: 30px;
+  margin-bottom: 20px;
   flex-wrap: wrap;
   position: relative;
   z-index: 1;
@@ -566,8 +663,8 @@ const removeFile = () => {
 }
 
 .result {
-  margin-top: 30px;
-  padding: 30px;
+  margin-top: 16px;
+  padding: 0;
   border-radius: var(--radius-lg);
   animation: fadeIn 0.5s ease-in-out;
   position: relative;
@@ -585,14 +682,15 @@ const removeFile = () => {
 }
 
 .result-icon {
-  font-size: 48px;
-  margin-bottom: 15px;
+  font-size: 40px;
+  margin-bottom: 10px;
 }
 
 .result h3 {
-  margin: 0 0 15px 0;
+  margin: 0 0 12px 0;
   color: var(--text);
-  font-size: 20px;
+  font-size: 18px;
+  line-height: 1.35;
 }
 
 .result p {
@@ -651,7 +749,7 @@ const removeFile = () => {
 .result-success {
   background: rgba(6, 14, 22, 0.35);
   border: 1px solid rgba(32, 214, 255, 0.22);
-  padding: 30px;
+  padding: 20px 18px 22px;
   border-radius: var(--radius-lg);
   animation: fadeIn 0.5s ease-in-out;
 }
@@ -721,6 +819,11 @@ const removeFile = () => {
   font-weight: 700;
 }
 
+.risk-none {
+  color: var(--muted) !important;
+  font-weight: 500;
+}
+
 .output-file {
   margin: 20px 0;
 }
@@ -735,18 +838,24 @@ const removeFile = () => {
 .image-container {
   background: rgba(6, 14, 22, 0.32);
   border-radius: 8px;
-  padding: 15px;
+  padding: 10px;
   border: 1px solid rgba(32, 214, 255, 0.14);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
   display: flex;
   align-items: center;
   justify-content: center;
+  max-height: min(62vh, 560px);
+  overflow: auto;
 }
 
 .output-video,
 .output-image {
+  display: block;
   max-width: 100%;
-  max-height: 300px;
+  width: auto;
+  height: auto;
+  max-height: min(58vh, 520px);
+  object-fit: contain;
   border-radius: 4px;
 }
 

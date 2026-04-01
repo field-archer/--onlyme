@@ -6,8 +6,58 @@ type MapInstance = any;
 type GeolocationInstance = any;
 // 标记实例类型
 type MarkerInstance = any;
-// 坐标类型
-type LngLat = [number, number];
+/** 坐标：[lng,lat] 或高德 LngLat 对象 */
+export type LngLatInput =
+  | [number, number]
+  | { getLng: () => number; getLat: () => number }
+  | { lng: number; lat: number };
+
+/** 添加火点标记时的展示与同步选项（见《前端对接-用户与火点标记.md》） */
+export type AddFireMarkerOptions = {
+  serverId?: number;
+  fireCount: number;
+  markedAt?: string;
+  onRemoteDelete?: (serverId: number) => Promise<void>;
+};
+
+/** 地名搜索结果（供侧栏列表展示） */
+export interface PlaceSearchPoiItem {
+  id: string;
+  name: string;
+  address: string;
+  location: [number, number];
+}
+
+function poiLocationToTuple(poi: any): [number, number] | null {
+  const loc = poi?.location;
+  if (!loc) return null;
+  if (Array.isArray(loc) && loc.length >= 2) {
+    return [Number(loc[0]), Number(loc[1])];
+  }
+  if (typeof loc.getLng === 'function') {
+    return [loc.getLng(), loc.getLat()];
+  }
+  if (typeof loc.lng === 'number' && typeof loc.lat === 'number') {
+    return [loc.lng, loc.lat];
+  }
+  return null;
+}
+
+function normalizeLngLat(AMap: any, position: LngLatInput): any {
+  let lng: number;
+  let lat: number;
+  if (Array.isArray(position)) {
+    lng = Number(position[0]);
+    lat = Number(position[1]);
+  } else if (typeof (position as any).getLng === 'function') {
+    lng = (position as any).getLng();
+    lat = (position as any).getLat();
+  } else {
+    lng = (position as { lng: number }).lng;
+    lat = (position as { lat: number }).lat;
+  }
+  return new AMap.LngLat(lng, lat);
+}
 
 // 全局变量，用于判断地图脚本是否已加载
 let isScriptLoaded = false;
@@ -26,7 +76,14 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
   // 地图加载状态
   const isMapLoaded = ref(false);
   // 存储标记相关的对象
-  let markerData: { [key: string]: { marker: any, circle: any, interval: any } } = {};
+  let markerData: {
+    [key: string]: {
+      marker: any;
+      circle: any;
+      serverId?: number;
+    };
+  } = {};
+  let placeSearchInstance: any = null;
 
   /**
    * 加载高德地图脚本
@@ -94,7 +151,7 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
       const AMap = await AMapLoader.load({
         key: import.meta.env.VITE_AMAP_KEY || '您的Web端开发者Key',
         version: '2.0',
-        plugins: ['AMap.Scale', 'AMap.ToolBar', 'AMap.Geolocation']
+        plugins: ['AMap.Scale', 'AMap.ToolBar', 'AMap.Geolocation', 'AMap.PlaceSearch']
       });
 
       if (!mapContainer.value) {
@@ -106,11 +163,16 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
         map.value.destroy();
       }
 
-      // 创建地图实例
+      // 方案 A：卫星影像 + 路网，便于野外/林相辨识；路网叠在影像之上
+      const satelliteLayer = new AMap.TileLayer.Satellite({ zIndex: 5 });
+      const roadNetLayer = new AMap.TileLayer.RoadNet({ zIndex: 10 });
+
+      // 2D 俯视图：与 Circle 等矢量覆盖物对齐稳定
       const mapInstance = new AMap.Map(mapContainer.value, {
-        viewMode: '3D',
+        viewMode: '2D',
         zoom: 11,
-        center: [116.397428, 39.90923]
+        center: [116.397428, 39.90923],
+        layers: [satelliteLayer, roadNetLayer]
       });
 
       // 添加控件
@@ -128,6 +190,12 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
 
       mapInstance.addControl(geolocationInstance);
 
+      // 不绑定 map/panel，仅回调取数，由 Vue 侧自绘列表
+      placeSearchInstance = new AMap.PlaceSearch({
+        pageSize: 15,
+        pageIndex: 1
+      });
+
       // 更新状态
       map.value = mapInstance;
       geolocation.value = geolocationInstance;
@@ -143,7 +211,7 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
   /**
    * 获取当前位置
    */
-  const getCurrentLocation = (): Promise<{ position: LngLat }> => {
+  const getCurrentLocation = (): Promise<{ position: LngLatInput }> => {
     return new Promise((resolve, reject) => {
       if (!geolocation.value) {
         reject(new Error('定位控件未初始化'));
@@ -161,80 +229,149 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
   };
 
   /**
-   * 添加火灾标记
-   * @param position 位置坐标
+   * 关键字搜索 POI（全国，不限制城市）
    */
-  const addFireMarker = (position: LngLat) => {
+  const searchPlaces = (keyword: string): Promise<PlaceSearchPoiItem[]> => {
+    const kw = keyword.trim();
+    if (!kw) return Promise.resolve([]);
+
+    return new Promise((resolve) => {
+      if (!placeSearchInstance) {
+        resolve([]);
+        return;
+      }
+      placeSearchInstance.search(kw, (status: string, result: any) => {
+        if (status !== 'complete' || !result?.poiList?.pois?.length) {
+          resolve([]);
+          return;
+        }
+        const items: PlaceSearchPoiItem[] = [];
+        result.poiList.pois.forEach((poi: any, i: number) => {
+          const tuple = poiLocationToTuple(poi);
+          if (!tuple) return;
+          const addr = [poi.pname, poi.cityname, poi.adname, poi.address].filter(Boolean).join('');
+          items.push({
+            id: poi.id != null && poi.id !== '' ? String(poi.id) : `poi-${i}`,
+            name: poi.name || '未命名地点',
+            address: addr || poi.address || '',
+            location: tuple
+          });
+        });
+        resolve(items);
+      });
+    });
+  };
+
+  /** 将地图中心移到该点并放大（用于搜索选中后的预览，4b） */
+  const focusMapOn = (position: LngLatInput) => {
+    if (!map.value) return;
+    const AMap = (window as any).AMap;
+    if (!AMap) return;
+    const center = normalizeLngLat(AMap, position);
+    map.value.setCenter(center);
+    map.value.setZoom(15);
+  };
+
+  /**
+   * 添加火灾标记（展示火焰数、标记时间；可绑定服务端 id 与删除同步）
+   */
+  const addFireMarker = (position: LngLatInput, options?: AddFireMarkerOptions) => {
     if (!map.value) return;
 
     const AMap = (window as any).AMap;
     if (!AMap) return;
 
-    // 创建火灾标记
+    const fireCount = Math.max(1, Math.floor(options?.fireCount ?? 1));
+    const serverId = options?.serverId;
+    const markedAt = options?.markedAt ?? '';
+    const onRemoteDelete = options?.onRemoteDelete;
+
+    const center = normalizeLngLat(AMap, position);
+
+    const titleParts = [`火焰 ${fireCount} 处`];
+    if (markedAt) {
+      try {
+        titleParts.push(new Date(markedAt).toLocaleString('zh-CN', { hour12: false }));
+      } catch {
+        titleParts.push(markedAt);
+      }
+    }
+    const markerTitle = titleParts.join(' · ');
+
     const fireMarker = new AMap.Marker({
-      position: position,
+      position: center,
       map: map.value,
+      anchor: 'center',
+      offset: new AMap.Pixel(0, 0),
+      zIndex: 120,
+      title: markerTitle,
       icon: new AMap.Icon({
         size: new AMap.Size(40, 40),
         image: 'https://a.amap.com/jsapi_demos/static/demo-center/icons/fire.png',
         imageSize: new AMap.Size(40, 40)
-      }),
-      animation: 'AMAP_ANIMATION_BOUNCE'
+      })
     });
 
-    // 添加热力效果（使用Circle模拟）
     const circle = new AMap.Circle({
-      center: position,
+      center,
       radius: 100,
-      fillColor: 'rgba(255, 69, 0, 0.3)',
-      strokeColor: 'rgba(255, 69, 0, 0.6)',
-      strokeWeight: 2
+      fillColor: 'rgba(255, 69, 0, 0.22)',
+      strokeColor: 'rgba(255, 80, 0, 0.75)',
+      strokeWeight: 2,
+      bubble: true,
+      zIndex: 50
     });
     circle.setMap(map.value);
 
-    // 动画效果
-    let radius = 100;
-    const animationInterval = setInterval(() => {
-      if (!map.value) {
-        clearInterval(animationInterval);
-        return;
-      }
-      radius = radius === 100 ? 150 : 100;
-      circle.setRadius(radius);
-    }, 1000);
-
-    // 生成唯一ID
     const markerId = `marker_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    
-    // 存储标记相关的对象
+
     markerData[markerId] = {
       marker: fireMarker,
-      circle: circle,
-      interval: animationInterval
+      circle,
+      serverId
     };
 
-    // 添加点击事件
-    fireMarker.on('click', () => {
-      if (confirm('确定要删除这个火灾标记吗？')) {
-        fireMarker.remove();
-        circle.remove();
-        clearInterval(animationInterval);
-        // 从标记数组中移除
-        const index = markers.value.indexOf(fireMarker);
-        if (index > -1) {
-          markers.value.splice(index, 1);
+    fireMarker.on('click', async () => {
+      const timeLabel = markedAt
+        ? (() => {
+            try {
+              return new Date(markedAt).toLocaleString('zh-CN', { hour12: false });
+            } catch {
+              return markedAt;
+            }
+          })()
+        : '—';
+      const msg = `确定删除该火点标记？\n\n火焰数量：${fireCount}\n标记时间：${timeLabel}`;
+      if (!confirm(msg)) return;
+
+      if (serverId != null && onRemoteDelete) {
+        try {
+          await onRemoteDelete(serverId);
+        } catch (e: any) {
+          alert(e?.message || '服务器删除失败');
+          return;
         }
-        // 从markerData中移除
-        delete markerData[markerId];
       }
+
+      fireMarker.remove();
+      circle.remove();
+      const index = markers.value.indexOf(fireMarker);
+      if (index > -1) {
+        markers.value.splice(index, 1);
+      }
+      delete markerData[markerId];
     });
 
-    // 调整地图视角
-    map.value.setCenter(position);
-    map.value.setZoom(15);
-
-    // 保存标记实例
     markers.value.push(fireMarker);
+  };
+
+  /** 当前地图上所有已同步到服务端的火点 id（用于批量删除等） */
+  const collectServerMarkerIds = (): number[] => {
+    const ids = new Set<number>();
+    Object.values(markerData).forEach((d) => {
+      if (d.serverId != null) ids.add(d.serverId);
+    });
+    return [...ids];
   };
 
   /**
@@ -245,7 +382,6 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
     Object.values(markerData).forEach(data => {
       data.marker.remove();
       data.circle.remove();
-      clearInterval(data.interval);
     });
     markerData = {};
     markers.value = [];
@@ -255,12 +391,22 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
    * 销毁地图
    */
   const destroyMap = () => {
+    Object.values(markerData).forEach((data) => {
+      try {
+        data.marker.remove();
+        data.circle.remove();
+      } catch {
+        /* ignore */
+      }
+    });
+    markerData = {};
+    markers.value = [];
+    placeSearchInstance = null;
     if (map.value) {
       map.value.destroy();
       map.value = null;
       geolocation.value = null;
       isMapLoaded.value = false;
-      markers.value = [];
     }
   };
 
@@ -283,7 +429,10 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
     isMapLoaded,
     initMap,
     getCurrentLocation,
+    searchPlaces,
+    focusMapOn,
     addFireMarker,
+    collectServerMarkerIds,
     clearMarkers,
     destroyMap
   };

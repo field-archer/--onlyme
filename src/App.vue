@@ -49,12 +49,14 @@ body {
     radial-gradient(900px 560px at 92% 18%, rgba(32, 214, 255, 0.12), transparent 60%),
     linear-gradient(180deg, var(--bg-0), var(--bg-1));
   color: var(--text);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 #app {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 button {
