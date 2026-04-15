@@ -18,6 +18,20 @@ export type AddFireMarkerOptions = {
   fireCount: number;
   markedAt?: string;
   onRemoteDelete?: (serverId: number) => Promise<void>;
+  /** 火焰等级：低/中/高（用于前端展示差异化样式） */
+  level?: 'low' | 'medium' | 'high';
+  /** 火灾原因（用于前端展示/标题） */
+  cause?: 'human' | 'lightning' | 'farming' | 'unknown';
+  /**
+   * 自定义点击标记的行为（例如：更改状态）。提供则不会走默认“点击删除”逻辑。
+   */
+  onMarkerClick?: (ctx: {
+    serverId?: number;
+    fireCount: number;
+    markedAt?: string;
+    marker: any;
+    circle: any;
+  }) => void | Promise<void>;
 };
 
 /** 地名搜索结果（供侧栏列表展示） */
@@ -154,6 +168,9 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
         plugins: ['AMap.Scale', 'AMap.ToolBar', 'AMap.Geolocation', 'AMap.PlaceSearch']
       });
 
+      // 确保全局可用：HomeView/useMap 的覆盖物逻辑依赖 window.AMap
+      (window as any).AMap = AMap;
+
       if (!mapContainer.value) {
         throw new Error('地图容器不存在');
       }
@@ -285,10 +302,16 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
     const serverId = options?.serverId;
     const markedAt = options?.markedAt ?? '';
     const onRemoteDelete = options?.onRemoteDelete;
+    const onMarkerClick = options?.onMarkerClick;
+    const level = options?.level ?? 'low';
+    const cause = options?.cause ?? 'unknown';
 
     const center = normalizeLngLat(AMap, position);
 
-    const titleParts = [`火焰 ${fireCount} 处`];
+    const lvText = level === 'high' ? '高' : level === 'medium' ? '中' : '低';
+    const causeText =
+      cause === 'human' ? '人为' : cause === 'lightning' ? '雷击' : cause === 'farming' ? '农事' : '未知';
+    const titleParts = [`火焰 ${fireCount} 处`, `等级${lvText}`, `原因${causeText}`];
     if (markedAt) {
       try {
         titleParts.push(new Date(markedAt).toLocaleString('zh-CN', { hour12: false }));
@@ -298,6 +321,13 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
     }
     const markerTitle = titleParts.join(' · ');
 
+    const styleByLevel =
+      level === 'high'
+        ? { size: 46, radius: 160, fill: 'rgba(245, 63, 63, 0.18)', stroke: 'rgba(245, 63, 63, 0.80)' }
+        : level === 'medium'
+          ? { size: 42, radius: 130, fill: 'rgba(255, 125, 0, 0.18)', stroke: 'rgba(255, 125, 0, 0.82)' }
+          : { size: 40, radius: 110, fill: 'rgba(0, 150, 136, 0.16)', stroke: 'rgba(0, 150, 136, 0.82)' };
+
     const fireMarker = new AMap.Marker({
       position: center,
       map: map.value,
@@ -306,17 +336,17 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
       zIndex: 120,
       title: markerTitle,
       icon: new AMap.Icon({
-        size: new AMap.Size(40, 40),
+        size: new AMap.Size(styleByLevel.size, styleByLevel.size),
         image: 'https://a.amap.com/jsapi_demos/static/demo-center/icons/fire.png',
-        imageSize: new AMap.Size(40, 40)
+        imageSize: new AMap.Size(styleByLevel.size, styleByLevel.size)
       })
     });
 
     const circle = new AMap.Circle({
       center,
-      radius: 100,
-      fillColor: 'rgba(255, 69, 0, 0.22)',
-      strokeColor: 'rgba(255, 80, 0, 0.75)',
+      radius: styleByLevel.radius,
+      fillColor: styleByLevel.fill,
+      strokeColor: styleByLevel.stroke,
       strokeWeight: 2,
       bubble: true,
       zIndex: 50
@@ -332,6 +362,10 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
     };
 
     fireMarker.on('click', async () => {
+      if (onMarkerClick) {
+        await onMarkerClick({ serverId, fireCount, markedAt, marker: fireMarker, circle });
+        return;
+      }
       const timeLabel = markedAt
         ? (() => {
             try {

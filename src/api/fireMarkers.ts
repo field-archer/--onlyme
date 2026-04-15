@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { FireMarkerItem, FireMarkerListData } from './types';
+import type { FireCause, FireLevel, FireMarkerItem, FireMarkerListData, FireStatus } from './types';
 
 export type CreateFireMarkerBody = {
   longitude: number;
@@ -8,6 +8,10 @@ export type CreateFireMarkerBody = {
   fire_count: number;
   source?: string;
   note?: string | null;
+  status?: FireStatus;
+  level?: 'low' | 'medium' | 'high';
+  cause?: 'human' | 'lightning' | 'farming' | 'unknown';
+  region?: string | null;
 };
 
 export async function listFireMarkers(
@@ -36,5 +40,29 @@ export async function deleteFireMarker(token: string, id: number) {
   return apiFetch<null>(`/fire-markers/${id}`, {
     method: 'DELETE',
     token
+  });
+}
+
+export async function updateFireMarkerStatus(
+  token: string,
+  id: number,
+  body: { status: FireStatus }
+) {
+  return apiFetch<FireMarkerItem>(`/fire-markers/${id}/status`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(body)
+  });
+}
+
+export async function updateFireMarker(
+  token: string,
+  id: number,
+  body: { status?: FireStatus; level?: FireLevel; cause?: FireCause }
+) {
+  return apiFetch<FireMarkerItem>(`/fire-markers/${id}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(body)
   });
 }
