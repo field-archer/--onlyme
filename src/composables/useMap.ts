@@ -1,4 +1,5 @@
 import { ref, onMounted, onUnmounted, Ref } from 'vue';
+import { notifyGeoServiceError } from '../utils/geoApiError';
 
 // 地图实例类型
 type MapInstance = any;
@@ -34,28 +35,31 @@ export type AddFireMarkerOptions = {
   }) => void | Promise<void>;
 };
 
-/** 地名搜索结果（供侧栏列表展示） */
-export interface PlaceSearchPoiItem {
-  id: string;
-  name: string;
-  address: string;
-  location: [number, number];
-}
+/** 地名搜索结果类型见 `src/api/geo.ts`（由后端代理检索，不在此文件重复定义） */
 
-function poiLocationToTuple(poi: any): [number, number] | null {
-  const loc = poi?.location;
-  if (!loc) return null;
-  if (Array.isArray(loc) && loc.length >= 2) {
-    return [Number(loc[0]), Number(loc[1])];
-  }
-  if (typeof loc.getLng === 'function') {
-    return [loc.getLng(), loc.getLat()];
-  }
-  if (typeof loc.lng === 'number' && typeof loc.lat === 'number') {
-    return [loc.lng, loc.lat];
-  }
-  return null;
-}
+/** 高德 JSAPI Key + 安全密钥（通常来自 GET /api/geo/map-config） */
+export type MapCredentials = {
+  jsapiKey: string;
+  securityJsCode: string;
+};
+
+export type UseMapOptions = {
+  /** 登录后由服务端下发 Key；未提供时仅开发可用 .env 回退 */
+  fetchMapCredentials?: () => Promise<MapCredentials>;
+};
+
+/**
+ * 火点图标（内联 SVG），避免对图商 CDN 发起 HTTP。
+ * 原高德 demo PNG 在同样 imageSize 下四周留白较多，主图形更小；这里对图形做约 0.72 倍居中缩放，观感接近旧版占比。
+ */
+const FIRE_MARKER_ICON =
+  'data:image/svg+xml;charset=utf-8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">' +
+      '<g transform="translate(24 24) scale(0.72) translate(-24 -24)">' +
+      '<path fill="#ff5722" stroke="rgba(255,255,255,0.9)" stroke-width="1.75" d="M24 8c-1.5 6-6 10-6 17a6 6 0 1012 0c0-5-3-9-6-17zm0 22a4 4 0 110-.01z"/>' +
+      '</g></svg>'
+  );
 
 function normalizeLngLat(AMap: any, position: LngLatInput): any {
   let lng: number;
@@ -80,7 +84,9 @@ let scriptLoadPromise: Promise<any> | null = null;
 /**
  * 地图相关的组合式函数
  */
-export function useMap(mapContainer: Ref<HTMLElement | null>) {
+export function useMap(mapContainer: Ref<HTMLElement | null>, mapOptions?: UseMapOptions) {
+  /** 防止 onMounted 与外部 watch 并发重复 init（每个 useMap 实例独立） */
+  let initMapMutex: Promise<unknown> | null = null;
   // 地图实例
   const map = ref<MapInstance | null>(null);
   // 定位控件实例
@@ -89,6 +95,8 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
   const markers = ref<MarkerInstance[]>([]);
   // 地图加载状态
   const isMapLoaded = ref(false);
+  /** 地图初始化失败时的可读说明（含服务端未配置 Key 等） */
+  const mapInitError = ref('');
   // 存储标记相关的对象
   let markerData: {
     [key: string]: {
@@ -97,8 +105,6 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
       serverId?: number;
     };
   } = {};
-  let placeSearchInstance: any = null;
-
   /**
    * 加载高德地图脚本
    */
@@ -113,13 +119,8 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
       return Promise.resolve((window as any).AMap);
     }
 
-    // 创建新的加载Promise
+    // 创建新的加载Promise（须在调用前设置 window._AMapSecurityConfig）
     scriptLoadPromise = new Promise((resolve, reject) => {
-      // 安全密钥配置
-      (window as any)._AMapSecurityConfig = {
-        securityJsCode: import.meta.env.VITE_AMAP_SECURITY_CODE || '您的安全密钥',
-      };
-
       // 检查是否已存在脚本标签
       const existingScript = document.querySelector('script[src="https://webapi.amap.com/loader.js"]');
       if (existingScript) {
@@ -157,15 +158,39 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
    * 初始化地图
    */
   const initMap = async () => {
+    if (initMapMutex) {
+      return await initMapMutex;
+    }
+    initMapMutex = (async () => {
+    mapInitError.value = '';
     try {
-      // 等待地图脚本加载
+      let jsapiKey = '';
+      let securityJsCode = '';
+      if (mapOptions?.fetchMapCredentials) {
+        const c = await mapOptions.fetchMapCredentials();
+        jsapiKey = (c.jsapiKey || '').trim();
+        securityJsCode = (c.securityJsCode || '').trim();
+      } else {
+        jsapiKey = (import.meta.env.VITE_AMAP_KEY || '').trim();
+        securityJsCode = (import.meta.env.VITE_AMAP_SECURITY_CODE || '').trim();
+      }
+
+      if (!jsapiKey) {
+        throw new Error(
+          '地图 Key 未配置：请登录后由服务端 GET /api/geo/map-config 下发 jsapi_key，或在本地 .env 设置 VITE_AMAP_KEY（仅供调试）。'
+        );
+      }
+
+      (window as any)._AMapSecurityConfig = {
+        securityJsCode: securityJsCode || ''
+      };
+
       const AMapLoader = await loadAMapScript();
-      
-      // 加载地图和插件
+
       const AMap = await AMapLoader.load({
-        key: import.meta.env.VITE_AMAP_KEY || '您的Web端开发者Key',
+        key: jsapiKey,
         version: '2.0',
-        plugins: ['AMap.Scale', 'AMap.ToolBar', 'AMap.Geolocation', 'AMap.PlaceSearch']
+        plugins: ['AMap.Scale', 'AMap.ToolBar', 'AMap.Geolocation']
       });
 
       // 确保全局可用：HomeView/useMap 的覆盖物逻辑依赖 window.AMap
@@ -175,16 +200,13 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
         throw new Error('地图容器不存在');
       }
 
-      // 如果地图已存在，先销毁
       if (map.value) {
         map.value.destroy();
       }
 
-      // 方案 A：卫星影像 + 路网，便于野外/林相辨识；路网叠在影像之上
       const satelliteLayer = new AMap.TileLayer.Satellite({ zIndex: 5 });
       const roadNetLayer = new AMap.TileLayer.RoadNet({ zIndex: 10 });
 
-      // 2D 俯视图：与 Circle 等矢量覆盖物对齐稳定
       const mapInstance = new AMap.Map(mapContainer.value, {
         viewMode: '2D',
         zoom: 11,
@@ -192,11 +214,9 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
         layers: [satelliteLayer, roadNetLayer]
       });
 
-      // 添加控件
       mapInstance.addControl(new AMap.Scale());
       mapInstance.addControl(new AMap.ToolBar());
 
-      // 初始化定位控件
       const geolocationInstance = new AMap.Geolocation({
         enableHighAccuracy: true,
         timeout: 10000,
@@ -207,21 +227,29 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
 
       mapInstance.addControl(geolocationInstance);
 
-      // 不绑定 map/panel，仅回调取数，由 Vue 侧自绘列表
-      placeSearchInstance = new AMap.PlaceSearch({
-        pageSize: 15,
-        pageIndex: 1
-      });
-
-      // 更新状态
       map.value = mapInstance;
       geolocation.value = geolocationInstance;
       isMapLoaded.value = true;
+      mapInitError.value = '';
 
       return mapInstance;
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('地图初始化失败:', error);
+      notifyGeoServiceError(error);
+      const msg =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : '地图初始化失败';
+      mapInitError.value = msg;
       throw error;
+    }
+    })();
+    try {
+      return await initMapMutex;
+    } finally {
+      initMapMutex = null;
     }
   };
 
@@ -241,40 +269,6 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
         } else {
           reject(new Error(result.info));
         }
-      });
-    });
-  };
-
-  /**
-   * 关键字搜索 POI（全国，不限制城市）
-   */
-  const searchPlaces = (keyword: string): Promise<PlaceSearchPoiItem[]> => {
-    const kw = keyword.trim();
-    if (!kw) return Promise.resolve([]);
-
-    return new Promise((resolve) => {
-      if (!placeSearchInstance) {
-        resolve([]);
-        return;
-      }
-      placeSearchInstance.search(kw, (status: string, result: any) => {
-        if (status !== 'complete' || !result?.poiList?.pois?.length) {
-          resolve([]);
-          return;
-        }
-        const items: PlaceSearchPoiItem[] = [];
-        result.poiList.pois.forEach((poi: any, i: number) => {
-          const tuple = poiLocationToTuple(poi);
-          if (!tuple) return;
-          const addr = [poi.pname, poi.cityname, poi.adname, poi.address].filter(Boolean).join('');
-          items.push({
-            id: poi.id != null && poi.id !== '' ? String(poi.id) : `poi-${i}`,
-            name: poi.name || '未命名地点',
-            address: addr || poi.address || '',
-            location: tuple
-          });
-        });
-        resolve(items);
       });
     });
   };
@@ -326,7 +320,7 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
         ? { size: 46, radius: 160, fill: 'rgba(245, 63, 63, 0.18)', stroke: 'rgba(245, 63, 63, 0.80)' }
         : level === 'medium'
           ? { size: 42, radius: 130, fill: 'rgba(255, 125, 0, 0.18)', stroke: 'rgba(255, 125, 0, 0.82)' }
-          : { size: 40, radius: 110, fill: 'rgba(0, 150, 136, 0.16)', stroke: 'rgba(0, 150, 136, 0.82)' };
+          : { size: 40, radius: 110, fill: 'rgba(255, 214, 0, 0.16)', stroke: 'rgba(255, 200, 60, 0.88)' };
 
     const fireMarker = new AMap.Marker({
       position: center,
@@ -337,7 +331,7 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
       title: markerTitle,
       icon: new AMap.Icon({
         size: new AMap.Size(styleByLevel.size, styleByLevel.size),
-        image: 'https://a.amap.com/jsapi_demos/static/demo-center/icons/fire.png',
+        image: FIRE_MARKER_ICON,
         imageSize: new AMap.Size(styleByLevel.size, styleByLevel.size)
       })
     });
@@ -435,7 +429,6 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
     });
     markerData = {};
     markers.value = [];
-    placeSearchInstance = null;
     if (map.value) {
       map.value.destroy();
       map.value = null;
@@ -461,9 +454,9 @@ export function useMap(mapContainer: Ref<HTMLElement | null>) {
     geolocation,
     markers,
     isMapLoaded,
+    mapInitError,
     initMap,
     getCurrentLocation,
-    searchPlaces,
     focusMapOn,
     addFireMarker,
     collectServerMarkerIds,

@@ -1,5 +1,5 @@
 林火检测系统（前端）前端须知（后端接口对接）
-更新时间：2026-04-13
+更新时间：2026-04-18
 
 本文件用于前端同学快速对接后端接口与字段约定。
 统一响应 Envelope：
@@ -14,6 +14,11 @@
 ========================
 - 除 /api/auth/register、/api/auth/login、/（根路径）、/api/analyze 外，其余接口需携带：
   Authorization: Bearer <token>
+
+1.1 外连与业务 HTTP 约定（与当前实现对齐）
+- 业务 JSON、地名搜索、火点/看板/台账等：**仅**请求自建后端（`VITE_API_BASE_URL`，默认 `http://localhost:8000/api`）。
+- 地图展示：浏览器仍加载高德 JSAPI Loader 与地图瓦片（图商域名），属展示层必要外连；**地名 POI 检索、逆地理解析**由后端代理，前端不调高德 Web 服务 REST。
+- 统计图：ECharts 为 **npm 依赖**，构建后由 `import('echarts')` **按需加载**（独立 chunk），不在运行时从公网 CDN 拉脚本。
 
 ========================
 2. 火点 FireMarker（地图标记）
@@ -51,7 +56,7 @@ body（前端会发送的字段）：
   "status": "pending",                    // 可选，默认 pending
   "level": "low",                         // 可选，默认 low
   "cause": "unknown",                     // 可选，默认 unknown
-  "region": null                          // 可选
+  "region": null                          // 可选；产品粒度为区县，建议由后端逆地理写入，前端通常传 null
 }
 
 成功 data：后端返回更新后的完整 FireMarker（至少包含 id/status/updated_at 等）
@@ -98,6 +103,35 @@ body（按需传任意字段）：
 说明：当 status/level/cause 任意发生变化，后端会写入 fire_marker_events 一条记录用于“火情处置台账”。
 
 ========================
+2.7 地名搜索（地图侧栏）
+========================
+GET /api/geo/place-search?q=<关键词>
+
+需 Authorization。
+
+成功 data：数组，元素形如：
+{
+  "id": "string",
+  "name": "地点名称",
+  "address": "展示用完整或简要地址",
+  "location": [116.397428, 39.90923]
+}
+
+========================
+2.8 逆地理单点（补全区县名）
+========================
+GET /api/geo/reverse-geocode?longitude=116.397428&latitude=39.90923
+
+需 Authorization。
+
+成功 data：
+{
+  "district": "北京市东城区"
+}
+
+说明：可与火点列表、台账联用；实现若返回 `region` 字段名，前端亦兼容。
+
+========================
 3. 仪表盘统计
 ========================
 GET /api/fire-dashboard
@@ -121,7 +155,7 @@ GET /api/fire-dashboard
     { "name": "误报", "value": 0 }
   ],
   "region_bar": [
-    { "name": "密云", "value": 3 }
+    { "name": "北京市密云区", "value": 3 }
   ],
   "trend_30d": [
     { "date": "03-15", "value": 0 }
@@ -138,7 +172,10 @@ GET /api/fire-ledger?page=&page_size=
   "items": [
     {
       "id": 1,
-      "region": "密云",
+      "marker_id": 101,
+      "longitude": 116.48,
+      "latitude": 40.37,
+      "region": "北京市密云区",
       "status": "pending",
       "level": "low",
       "updated_at": "2026-04-13T12:34:56Z",
@@ -149,4 +186,8 @@ GET /api/fire-ledger?page=&page_size=
   "page": 1,
   "page_size": 20
 }
+
+说明：`marker_id` 与可选 `longitude`/`latitude` 便于在 `region` 为「未知」时用主表或逆地理补全；**建议后端返回**。
+
+**各区县火情数量图**：`GET /api/fire-dashboard` 的 `region_bar` 在服务端无有效区县数据时，前端会用当前用户的火点列表 + `GET /api/geo/reverse-geocode` 聚合成图（与全局统计口径不一致时，以后端修正 `region_bar` 为准）。
 

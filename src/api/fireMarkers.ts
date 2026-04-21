@@ -58,7 +58,14 @@ export async function updateFireMarkerStatus(
 export async function updateFireMarker(
   token: string,
   id: number,
-  body: { status?: FireStatus; level?: FireLevel; cause?: FireCause }
+  body: {
+    status?: FireStatus;
+    level?: FireLevel;
+    cause?: FireCause;
+    /** 须与 latitude 成对传，服务端逆地理刷新区县 */
+    longitude?: number;
+    latitude?: number;
+  }
 ) {
   return apiFetch<FireMarkerItem>(`/fire-markers/${id}`, {
     method: 'PATCH',

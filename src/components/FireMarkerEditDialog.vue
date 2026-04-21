@@ -2,7 +2,9 @@
   <div class="overlay" role="dialog" aria-modal="true" @click.self="emit('close')">
     <div class="dialog">
       <div class="title">编辑火点信息</div>
-      <div class="subtitle">可更改状态、等级与火灾原因，并同步到后端。</div>
+      <div class="subtitle">
+        可更改状态、等级与火灾原因，并同步到后端。「已扑灭」仅更新状态、不删库；若要从数据库永久删除该火点，请使用下方删除按钮。
+      </div>
 
       <div class="section">
         <div class="section-hd">火点状态</div>
@@ -26,7 +28,7 @@
 
       <div class="section">
         <div class="section-hd">火焰等级</div>
-        <div class="seg">
+        <div class="seg level-flame">
           <button type="button" class="seg-btn" :class="{ active: draft.level === 'low' }" @click="draft.level = 'low'">低</button>
           <button
             type="button"
@@ -74,8 +76,11 @@
       </div>
 
       <div class="actions">
-        <button type="button" class="ghost" @click="emit('close')">取消</button>
-        <button type="button" class="primary" @click="emit('save', { ...draft })">保存</button>
+        <div class="actions-row">
+          <button type="button" class="ghost" @click="emit('close')">取消</button>
+          <button type="button" class="primary" @click="emit('save', { ...draft })">保存</button>
+        </div>
+        <button type="button" class="danger" @click="emit('delete')">从数据库删除该火点</button>
       </div>
     </div>
   </div>
@@ -94,6 +99,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   save: [payload: { status: FireStatus; level: FireLevel; cause: FireCause }];
+  delete: [];
 }>();
 
 const draft = reactive<{ status: FireStatus; level: FireLevel; cause: FireCause }>({
@@ -229,14 +235,41 @@ watch(
   background: rgba(6, 14, 22, 0.22);
 }
 
-.seg-btn.active {
+.grid4 .seg-btn.active {
   border-color: rgba(0, 255, 168, 0.42);
   background: linear-gradient(180deg, rgba(0, 255, 168, 0.14), rgba(32, 214, 255, 0.08));
-  box-shadow: 0 0 26px rgba(0, 255, 168, 0.10);
+  box-shadow: 0 0 26px rgba(0, 255, 168, 0.1);
+}
+
+.seg.level-flame .seg-btn:nth-child(1).active {
+  border-color: rgba(255, 210, 60, 0.55);
+  background: linear-gradient(180deg, rgba(255, 230, 120, 0.22), rgba(255, 180, 0, 0.1));
+  box-shadow: 0 0 22px rgba(255, 200, 60, 0.2);
+  color: rgba(40, 28, 0, 0.92);
+}
+
+.seg.level-flame .seg-btn:nth-child(2).active {
+  border-color: rgba(255, 145, 0, 0.5);
+  background: linear-gradient(180deg, rgba(255, 170, 80, 0.2), rgba(255, 125, 0, 0.1));
+  box-shadow: 0 0 22px rgba(255, 150, 40, 0.18);
+  color: rgba(236, 246, 255, 0.92);
+}
+
+.seg.level-flame .seg-btn:nth-child(3).active {
+  border-color: rgba(245, 63, 63, 0.55);
+  background: linear-gradient(180deg, rgba(255, 120, 120, 0.2), rgba(245, 63, 63, 0.1));
+  box-shadow: 0 0 22px rgba(255, 100, 100, 0.18);
+  color: rgba(236, 246, 255, 0.92);
 }
 
 .actions {
   margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.actions-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
@@ -269,6 +302,22 @@ watch(
 
 .primary:hover {
   border-color: rgba(0, 255, 168, 0.56);
+}
+
+.danger {
+  height: 40px;
+  border-radius: 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 850;
+  border: 1px solid rgba(245, 63, 63, 0.45);
+  background: rgba(245, 63, 63, 0.12);
+  color: rgba(255, 210, 210, 0.95);
+}
+
+.danger:hover {
+  border-color: rgba(245, 63, 63, 0.65);
+  background: rgba(245, 63, 63, 0.18);
 }
 
 @media (max-width: 480px) {

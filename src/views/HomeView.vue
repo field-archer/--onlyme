@@ -11,25 +11,8 @@
         </div>
       </div>
 
-      <nav class="topbar-nav" aria-label="主导航">
-        <button
-          v-for="t in topTabs"
-          :key="t.key"
-          type="button"
-          class="topbar-tab"
-          :class="{ active: activeTopTab === t.key }"
-          @click="activeTopTab = t.key"
-        >
-          {{ t.label }}
-        </button>
-      </nav>
-
       <div class="topbar-right">
         <div class="topbar-time" aria-label="当前时间">{{ nowText }}</div>
-        <button type="button" class="topbar-bell" aria-label="告警通知">
-          <span class="bell-dot" :class="{ show: markers.length > 0 }"></span>
-          <span aria-hidden="true">🔔</span>
-        </button>
         <div v-if="user" class="topbar-user">
           <div class="topbar-user-role">巡查员</div>
           <div class="topbar-user-name">{{ user.username }}</div>
@@ -97,7 +80,7 @@
             </div>
             <div class="level-row">
               <div class="level-label">火焰等级</div>
-              <div class="level-seg" role="radiogroup" aria-label="火焰等级选择">
+              <div class="level-seg level-flame" role="radiogroup" aria-label="火焰等级选择">
                 <button
                   type="button"
                   class="level-btn"
@@ -220,7 +203,7 @@
               </div>
               <div class="mini-kpi">
                 <div class="mini-kpi-label">低等级</div>
-                <div class="mini-kpi-value ok">{{ dashboard?.overview.level_counts.low ?? 0 }}</div>
+                <div class="mini-kpi-value low-tier">{{ dashboard?.overview.level_counts.low ?? 0 }}</div>
               </div>
             </div>
           </div>
@@ -230,26 +213,12 @@
       <section class="col center">
         <div class="map-shell">
           <div class="map-head">
-            <div class="map-tabs" role="tablist" aria-label="地图模式">
-              <button
-                v-for="t in mapTabs"
-                :key="t.key"
-                type="button"
-                class="map-tab"
-                role="tab"
-                :aria-selected="activeMapTab === t.key"
-                :class="{ active: activeMapTab === t.key }"
-                @click="activeMapTab = t.key"
-              >
-                {{ t.label }}
-              </button>
-            </div>
+            <div v-if="mapSurfaceAlert" class="map-surface-alert" role="alert">{{ mapSurfaceAlert }}</div>
             <div class="map-head-right">
               <div class="map-status">
                 <span class="dot" :class="{ ok: isMapLoaded, warn: !isMapLoaded }"></span>
                 <span>{{ isMapLoaded ? '地图已就绪' : '地图加载中' }}</span>
               </div>
-              <div class="watermark">XX 林业厅 | 林火检测系统</div>
             </div>
           </div>
             <div class="map-body">
@@ -317,6 +286,7 @@
               <div v-else-if="ledgerItems.length === 0" class="muted-note">暂无台账记录</div>
               <div v-for="it in ledgerItems" :key="it.id" class="ledger-log" role="listitem">
                 <div class="ledger-log-top">
+                  <span v-if="it.id < 0" class="ledger-chip new-marker" title="尚未写入处置事件，由前端根据火点补显">新标记</span>
                   <span class="ledger-chip level" :class="`lv-${it.level}`">等级：{{ levelText(it.level) }}</span>
                   <span class="ledger-chip status" :class="`st-${it.status}`">{{ statusText(it.status) }}</span>
                   <span class="ledger-time">{{ formatTime(it.updated_at) }}</span>
@@ -327,10 +297,6 @@
                 </div>
               </div>
             </div>
-            <button class="export-btn" type="button">
-              <span aria-hidden="true">⬇️</span>
-              导出 Excel 台账
-            </button>
           </div>
         </div>
       </section>
@@ -343,24 +309,41 @@
       :cause="editDialog.cause"
       @close="editDialog.open = false"
       @save="applyMarkerEdit"
+      @delete="removeFireMarkerFromDb"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { useMap, type PlaceSearchPoiItem } from '../composables/useMap';
+import { useMap } from '../composables/useMap';
+import { fetchGeoMapConfig, geoPlaceSearch, type GeoPlaceSearchItem } from '../api/geo';
 import { useAuth } from '../composables/useAuth';
-import { createFireMarker, listFireMarkers, updateFireMarker } from '../api/fireMarkers';
+import { createFireMarker, deleteFireMarker, listFireMarkers, updateFireMarker } from '../api/fireMarkers';
 import { ApiError } from '../api/client';
 import { lngLatInputToCoords } from '../utils/geo';
 import { getFireDashboard } from '../api/fireDashboard';
 import { listFireLedger } from '../api/fireLedger';
 import FireStatsCharts from '../components/FireStatsCharts.vue';
 import FireMarkerEditDialog from '../components/FireMarkerEditDialog.vue';
-import type { FireCause, FireDashboardData, FireLedgerItem, FireLevel, FireStatus } from '../api/types';
+import type {
+  FireCause,
+  FireDashboardData,
+  FireLedgerItem,
+  FireLevel,
+  FireMarkerItem,
+  FireStatus
+} from '../api/types';
 import { formatIsoTime, levelText, statusText } from '../utils/fire';
+import {
+  buildRegionBarFromMarkers,
+  enrichLedgerItems,
+  isServerRegionBarUseful,
+  markersToIdMap,
+  mergeLedgerWithPendingMarkers
+} from '../utils/regionEnrichment';
+import { notifyGeoServiceError } from '../utils/geoApiError';
 
 // 路由实例
 const router = useRouter();
@@ -375,26 +358,6 @@ const selectedCause = ref<FireCause>('unknown');
 // 使用地图组合式函数
 const { token, user, logout } = useAuth();
 
-type TopTabKey = 'home' | 'monitor' | 'device' | 'warning' | 'stats' | 'system';
-const topTabs: Array<{ key: TopTabKey; label: string }> = [
-  { key: 'home', label: '首页' },
-  { key: 'monitor', label: '火情监测' },
-  { key: 'device', label: '设备管理' },
-  { key: 'warning', label: '火险预警' },
-  { key: 'stats', label: '统计分析' },
-  { key: 'system', label: '系统管理' }
-];
-const activeTopTab = ref<TopTabKey>('monitor');
-
-type MapTabKey = 'situation' | 'devices' | 'risk' | 'history';
-const mapTabs: Array<{ key: MapTabKey; label: string }> = [
-  { key: 'situation', label: '火情态势' },
-  { key: 'devices', label: '设备分布' },
-  { key: 'risk', label: '火险区划' },
-  { key: 'history', label: '历史火情' }
-];
-const activeMapTab = ref<MapTabKey>('situation');
-
 const now = ref<Date>(new Date());
 let clockTimer: number | null = null;
 const nowText = computed(() => {
@@ -406,16 +369,38 @@ const nowText = computed(() => {
   )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 });
 
+const mapGeoHint = ref('');
+
 const {
   map,
   getCurrentLocation,
-  searchPlaces,
   focusMapOn,
   addFireMarker,
   clearMarkers,
   markers,
-  isMapLoaded
-} = useMap(mapContainer);
+  isMapLoaded,
+  mapInitError,
+  initMap
+} = useMap(mapContainer, {
+  fetchMapCredentials: async () => {
+    const t = token.value;
+    if (t) {
+      const d = await fetchGeoMapConfig(t);
+      const jsapiKey = (d.jsapi_key || '').trim();
+      const securityJsCode = (d.security_js_code || '').trim();
+      if (!jsapiKey) {
+        throw new Error('服务端 map-config 未返回 jsapi_key，请在服务端配置高德「Web端(JS API)」Key。');
+      }
+      return { jsapiKey, securityJsCode };
+    }
+    const k = (import.meta.env.VITE_AMAP_KEY || '').trim();
+    const s = (import.meta.env.VITE_AMAP_SECURITY_CODE || '').trim();
+    if (k && s) return { jsapiKey: k, securityJsCode: s };
+    throw new Error('请先登录以加载地图；未登录时可在本地 .env 配置 VITE_AMAP_KEY 与 VITE_AMAP_SECURITY_CODE 供调试。');
+  }
+});
+
+const mapSurfaceAlert = computed(() => mapInitError.value || mapGeoHint.value);
 
 const markersSyncing = ref(false);
 
@@ -425,7 +410,7 @@ function logoutAndHome() {
 }
 
 const searchKeyword = ref('');
-const searchResults = ref<PlaceSearchPoiItem[]>([]);
+const searchResults = ref<GeoPlaceSearchItem[]>([]);
 const searchLoading = ref(false);
 const searchMessage = ref('');
 const selectedPoiId = ref<string | null>(null);
@@ -445,17 +430,25 @@ const handlePlaceSearch = async () => {
     searchResults.value = [];
     return;
   }
+  const t = token.value;
+  if (!t) {
+    searchMessage.value = '请先登录后再搜索';
+    searchResults.value = [];
+    return;
+  }
   searchLoading.value = true;
   searchMessage.value = '';
   try {
-    const list = await searchPlaces(kw);
+    const list = await geoPlaceSearch(t, kw);
     searchResults.value = list;
     selectedPoiId.value = null;
     if (list.length === 0) {
       searchMessage.value = '未找到相关地点，可换个关键词，或开启「标记火点」后在图上点击';
     }
-  } catch {
-    searchMessage.value = '搜索失败，请稍后重试';
+  } catch (e: unknown) {
+    notifyGeoServiceError(e);
+    searchMessage.value =
+      e instanceof ApiError ? e.message : e instanceof Error ? e.message : '搜索失败，请稍后重试';
     searchResults.value = [];
   } finally {
     searchLoading.value = false;
@@ -463,7 +456,7 @@ const handlePlaceSearch = async () => {
 };
 
 /** 选中搜索结果：飞到该点预览（4b），并设待确认位置 */
-const selectSearchPoi = (poi: PlaceSearchPoiItem, idx: number) => {
+const selectSearchPoi = (poi: GeoPlaceSearchItem, idx: number) => {
   if (!map.value) return;
   const AMap = (window as any).AMap;
   if (!AMap) return;
@@ -476,13 +469,24 @@ const selectSearchPoi = (poi: PlaceSearchPoiItem, idx: number) => {
 
 const formatTime = formatIsoTime;
 
+const lastFireMarkers = ref<FireMarkerItem[]>([]);
+
 async function refreshDashboard() {
   const t = token.value;
   if (!t) return;
   dashboardLoading.value = true;
   dashboardError.value = '';
   try {
-    dashboard.value = await getFireDashboard(t);
+    const d = await getFireDashboard(t);
+    let region_bar = d.region_bar;
+    if (!isServerRegionBarUseful(region_bar) && lastFireMarkers.value.length > 0) {
+      try {
+        region_bar = await buildRegionBarFromMarkers(t, lastFireMarkers.value);
+      } catch (e) {
+        console.warn('各区县火情数量：用火点补全失败，使用接口 region_bar', e);
+      }
+    }
+    dashboard.value = { ...d, region_bar };
   } catch (e) {
     if (e instanceof ApiError && e.code === 40100) {
       logout();
@@ -502,8 +506,17 @@ async function refreshLedger() {
   ledgerError.value = '';
   try {
     const res = await listFireLedger(t, { page: 1, page_size: 50 });
-    ledgerItems.value = res.items;
-    ledgerTotal.value = res.total;
+    const byId = markersToIdMap(lastFireMarkers.value);
+    let items = await enrichLedgerItems(t, res.items, byId);
+    items = await mergeLedgerWithPendingMarkers(
+      t,
+      items,
+      lastFireMarkers.value,
+      user.value?.username || '—'
+    );
+    ledgerItems.value = items;
+    /** 接口事件总数 + 本页补显的「仅有火点、尚无事件」条数，便于与列表长度对齐 */
+    ledgerTotal.value = res.total + (items.length - res.items.length);
   } catch (e) {
     if (e instanceof ApiError && e.code === 40100) {
       logout();
@@ -551,7 +564,8 @@ async function applyMarkerEdit(payload: { status: FireStatus; level: FireLevel; 
       level: updated.level ?? payload.level,
       cause: updated.cause ?? payload.cause
     };
-    await Promise.all([refreshMarkers(), refreshDashboard(), refreshLedger()]);
+    await refreshMarkers();
+    await Promise.all([refreshDashboard(), refreshLedger()]);
   } catch (e) {
     if (e instanceof ApiError && e.code === 40100) {
       logout();
@@ -559,6 +573,35 @@ async function applyMarkerEdit(payload: { status: FireStatus; level: FireLevel; 
       return;
     }
     alert(e instanceof Error ? e.message : '更新状态失败');
+  }
+}
+
+/** 调用 DELETE /fire-markers/{id}，由后端删除数据库记录（与「已扑灭」仅改 status 不同） */
+async function removeFireMarkerFromDb() {
+  const id = editDialog.value.markerId;
+  if (!id) return;
+  if (
+    !confirm(
+      '确定从系统永久删除该火点？\n\n将请求后端删除数据库中的该条记录（及应级联删除的关联数据），不可恢复。'
+    )
+  ) {
+    return;
+  }
+  const t = token.value;
+  if (!t) return;
+  editDialog.value.open = false;
+  try {
+    await deleteFireMarker(t, id);
+    delete markerMeta.value[id];
+    await refreshMarkers();
+    await Promise.all([refreshDashboard(), refreshLedger()]);
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 40100) {
+      logout();
+      router.replace({ name: 'login', query: { redirect: route.fullPath } });
+      return;
+    }
+    alert(e instanceof Error ? e.message : '删除失败');
   }
 }
 
@@ -595,6 +638,7 @@ const markFireOnMap = async (event: any) => {
       cause: selectedCause.value,
       onMarkerClick: ({ serverId }) => openEditDialog(serverId)
     });
+    await refreshMarkers();
     await Promise.all([refreshDashboard(), refreshLedger()]);
   } catch (e) {
     if (e instanceof ApiError && e.code === 40100) {
@@ -623,18 +667,23 @@ const toggleFireMarking = () => {
 
 async function refreshMarkers() {
   const t = token.value;
-  if (!t) return;
+  if (!t) {
+    lastFireMarkers.value = [];
+    return;
+  }
   markersSyncing.value = true;
   try {
     const { items } = await listFireMarkers(t, { page: 1, page_size: 200 });
+    lastFireMarkers.value = items;
     clearMarkers();
     const meta: Record<number, { status: FireStatus; level: FireLevel; cause: FireCause }> = {};
     for (const it of items) {
-      meta[it.id] = {
-        status: (it.status ?? 'pending') as FireStatus,
-        level: (it.level ?? 'low') as FireLevel,
-        cause: (it.cause ?? 'unknown') as FireCause
-      };
+      const status = (it.status ?? 'pending') as FireStatus;
+      const level = (it.level ?? 'low') as FireLevel;
+      const cause = (it.cause ?? 'unknown') as FireCause;
+      // 已扑灭：仅台账/统计保留记录，地图上不展示标点（与 PATCH 后后端 status=extinguished 一致）
+      if (status === 'extinguished') continue;
+      meta[it.id] = { status, level, cause };
       addFireMarker([it.longitude, it.latitude], {
         serverId: it.id,
         fireCount: it.fire_count,
@@ -730,6 +779,7 @@ watch(isMapLoaded, (loaded) => {
             level: created.level ?? 'low',
             cause: created.cause ?? 'unknown'
           };
+          await refreshMarkers();
           await Promise.all([refreshDashboard(), refreshLedger()]);
         } catch (error) {
           console.error('自动标记失败:', error);
@@ -753,19 +803,47 @@ const ledgerError = ref('');
 watch(
   () => token.value,
   (t) => {
-    if (!t) return;
-    void Promise.all([refreshDashboard(), refreshLedger()]);
+    if (!t) {
+      lastFireMarkers.value = [];
+      return;
+    }
+    void (async () => {
+      await refreshMarkers();
+      await Promise.all([refreshDashboard(), refreshLedger()]);
+    })();
   },
   { immediate: true }
 );
+
+/** 登录后若地图尚未就绪（此前未登录无法 map-config），补一次 init */
+watch(
+  () => token.value,
+  async (t) => {
+    if (!t || isMapLoaded.value) return;
+    await nextTick();
+    if (!mapContainer.value) return;
+    try {
+      await initMap();
+    } catch {
+      /* mapInitError 已由 useMap 写入 */
+    }
+  }
+);
+
+const onGeoServiceHint = (ev: Event) => {
+  const m = (ev as CustomEvent<{ message?: string }>).detail?.message;
+  if (m) mapGeoHint.value = m;
+};
 
 onMounted(() => {
   clockTimer = window.setInterval(() => {
     now.value = new Date();
   }, 1000);
+  window.addEventListener('forestfire-geo-service', onGeoServiceHint);
 });
 
 onUnmounted(() => {
+  window.removeEventListener('forestfire-geo-service', onGeoServiceHint);
   if (clockTimer != null) {
     clearInterval(clockTimer);
     clockTimer = null;
@@ -862,7 +940,7 @@ onUnmounted(() => {
   z-index: 500;
   height: 72px;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
   padding: calc(10px + env(safe-area-inset-top, 0px)) 18px 10px;
@@ -885,8 +963,7 @@ onUnmounted(() => {
 }
 
 .topbar-left,
-.topbar-right,
-.topbar-nav {
+.topbar-right {
   position: relative;
   z-index: 1;
 }
@@ -925,40 +1002,6 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.topbar-nav {
-  display: inline-flex;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(38, 220, 255, 0.22);
-  background: rgba(6, 14, 22, 0.24);
-  box-shadow: 0 0 0 1px rgba(32, 214, 255, 0.10) inset, 0 18px 55px rgba(0, 0, 0, 0.28);
-}
-
-.topbar-tab {
-  border: 1px solid transparent;
-  background: transparent;
-  color: rgba(236, 246, 255, 0.88);
-  font-size: 13px;
-  padding: 8px 12px;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: background 180ms var(--ease), border-color 180ms var(--ease), transform 180ms var(--ease);
-  white-space: nowrap;
-}
-
-.topbar-tab:hover {
-  transform: translateY(-1px);
-  background: rgba(32, 214, 255, 0.10);
-  border-color: rgba(32, 214, 255, 0.22);
-}
-
-.topbar-tab.active {
-  background: linear-gradient(180deg, rgba(32, 214, 255, 0.26), rgba(32, 214, 255, 0.10));
-  border-color: rgba(0, 255, 168, 0.42);
-  box-shadow: 0 0 0 1px rgba(0, 255, 168, 0.12) inset, 0 0 28px rgba(32, 214, 255, 0.18);
-}
-
 .topbar-right {
   display: flex;
   justify-content: flex-end;
@@ -976,44 +1019,6 @@ onUnmounted(() => {
   border: 1px solid rgba(38, 220, 255, 0.16);
   background: rgba(6, 14, 22, 0.20);
   white-space: nowrap;
-}
-
-.topbar-bell {
-  position: relative;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  border: 1px solid rgba(38, 220, 255, 0.18);
-  background: rgba(6, 14, 22, 0.20);
-  color: rgba(236, 246, 255, 0.88);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 180ms var(--ease), border-color 180ms var(--ease), background 180ms var(--ease);
-}
-
-.topbar-bell:hover {
-  transform: translateY(-1px);
-  background: rgba(6, 14, 22, 0.28);
-  border-color: rgba(32, 214, 255, 0.30);
-}
-
-.bell-dot {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(245, 63, 63, 0.95);
-  box-shadow: 0 0 18px rgba(245, 63, 63, 0.45);
-  transform: scale(0);
-  transition: transform 180ms var(--ease);
-}
-
-.bell-dot.show {
-  transform: scale(1);
 }
 
 .topbar-user {
@@ -1088,10 +1093,32 @@ onUnmounted(() => {
   gap: 14px;
 }
 
-.col.left,
+.col.left {
+  overflow: hidden;
+  min-height: 0;
+}
+
 .col.right {
   overflow: auto;
   padding-right: 2px;
+}
+
+/* 左栏两张卡片：标题固定，内容区可滚动，避免「地图操作」「火险态势总览」底部被裁切 */
+.col.left > .glass-card {
+  flex: 1 1 0;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.col.left > .glass-card > .glass-bd {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .col.center {
@@ -1195,8 +1222,7 @@ onUnmounted(() => {
 }
 
 .ghost-btn,
-.primary-btn,
-.export-btn {
+.primary-btn {
   height: 40px;
   border-radius: 12px;
   border: 1px solid rgba(38, 220, 255, 0.20);
@@ -1446,10 +1472,31 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
-.level-btn.active {
+/* 火灾原因：保持原高亮 */
+.level-seg.cause .level-btn.active {
   border-color: rgba(0, 255, 168, 0.42);
   background: linear-gradient(180deg, rgba(0, 255, 168, 0.14), rgba(32, 214, 255, 0.08));
-  box-shadow: 0 0 28px rgba(0, 255, 168, 0.10);
+  box-shadow: 0 0 28px rgba(0, 255, 168, 0.1);
+}
+
+/* 火焰等级：低黄 / 中橙 / 高红 */
+.level-seg.level-flame .level-btn:nth-child(1).active {
+  border-color: rgba(255, 210, 60, 0.55);
+  background: linear-gradient(180deg, rgba(255, 230, 120, 0.22), rgba(255, 180, 0, 0.1));
+  box-shadow: 0 0 22px rgba(255, 200, 60, 0.2);
+  color: rgba(40, 28, 0, 0.92);
+}
+
+.level-seg.level-flame .level-btn:nth-child(2).active {
+  border-color: rgba(255, 145, 0, 0.5);
+  background: linear-gradient(180deg, rgba(255, 170, 80, 0.2), rgba(255, 125, 0, 0.1));
+  box-shadow: 0 0 22px rgba(255, 150, 40, 0.18);
+}
+
+.level-seg.level-flame .level-btn:nth-child(3).active {
+  border-color: rgba(245, 63, 63, 0.55);
+  background: linear-gradient(180deg, rgba(255, 120, 120, 0.2), rgba(245, 63, 63, 0.1));
+  box-shadow: 0 0 22px rgba(255, 100, 100, 0.18);
 }
 
 .map-shell {
@@ -1468,6 +1515,7 @@ onUnmounted(() => {
 
 .map-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
@@ -1476,39 +1524,16 @@ onUnmounted(() => {
   background: linear-gradient(180deg, rgba(32, 214, 255, 0.10), rgba(6, 14, 22, 0.0));
 }
 
-.map-tabs {
-  display: inline-flex;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(38, 220, 255, 0.18);
-  background: rgba(6, 14, 22, 0.22);
-}
-
-.map-tab {
-  height: 34px;
-  padding: 0 12px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: rgba(236, 246, 255, 0.88);
+.map-surface-alert {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 125, 0, 0.35);
+  background: rgba(255, 125, 0, 0.12);
+  color: rgba(255, 230, 200, 0.95);
   font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 180ms var(--ease), border-color 180ms var(--ease), transform 180ms var(--ease);
-  white-space: nowrap;
-}
-
-.map-tab:hover {
-  transform: translateY(-1px);
-  background: rgba(32, 214, 255, 0.10);
-  border-color: rgba(32, 214, 255, 0.20);
-}
-
-.map-tab.active {
-  background: linear-gradient(180deg, rgba(255, 125, 0, 0.24), rgba(255, 125, 0, 0.10));
-  border-color: rgba(255, 125, 0, 0.45);
-  box-shadow: 0 0 28px rgba(255, 125, 0, 0.14);
+  line-height: 1.45;
 }
 
 .map-head-right {
@@ -1516,6 +1541,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   min-width: 0;
+  margin-left: auto;
 }
 
 .map-status {
@@ -1528,15 +1554,6 @@ onUnmounted(() => {
   background: rgba(6, 14, 22, 0.20);
   font-size: 12px;
   color: rgba(190, 220, 235, 0.78);
-}
-
-.watermark {
-  font-size: 11px;
-  color: rgba(190, 220, 235, 0.55);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 260px;
 }
 
 .map-body {
@@ -1659,6 +1676,10 @@ onUnmounted(() => {
   color: rgba(170, 255, 245, 0.92);
 }
 
+.mini-kpi-value.low-tier {
+  color: rgba(255, 230, 140, 0.95);
+}
+
 .chart-skeleton {
   border-radius: 16px;
   border: 1px solid rgba(38, 220, 255, 0.12);
@@ -1771,8 +1792,8 @@ onUnmounted(() => {
 }
 
 .ledger-chip.lv-low {
-  border-color: rgba(0, 150, 136, 0.35);
-  color: rgba(170, 255, 245, 0.92);
+  border-color: rgba(255, 200, 60, 0.45);
+  color: rgba(255, 235, 180, 0.95);
 }
 
 .ledger-chip.lv-medium {
@@ -1798,6 +1819,12 @@ onUnmounted(() => {
 .ledger-chip.st-extinguished {
   border-color: rgba(0, 150, 136, 0.30);
   color: rgba(170, 255, 245, 0.92);
+}
+
+.ledger-chip.new-marker {
+  border-color: rgba(200, 160, 255, 0.45);
+  color: rgba(230, 210, 255, 0.95);
+  background: rgba(138, 43, 226, 0.12);
 }
 
 .ledger-log-main {
@@ -1876,17 +1903,6 @@ onUnmounted(() => {
   color: rgba(170, 255, 245, 0.92);
 }
 
-.export-btn {
-  width: 100%;
-  border-color: rgba(32, 214, 255, 0.26);
-  background: rgba(6, 14, 22, 0.24);
-}
-
-.export-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: rgba(0, 255, 168, 0.40);
-}
-
 /* Responsive: narrow screens collapse side panels */
 @media (max-width: 1200px) {
   .layout {
@@ -1915,10 +1931,6 @@ onUnmounted(() => {
     height: auto;
     gap: 10px;
     padding: 12px 14px;
-  }
-  .topbar-nav {
-    justify-content: center;
-    flex-wrap: wrap;
   }
   .topbar-right {
     justify-content: space-between;

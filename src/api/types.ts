@@ -34,7 +34,7 @@ export type FireMarkerItem = {
   level?: FireLevel;
   /** 火情成因：人为/雷击/农事/未知（统计用） */
   cause?: FireCause;
-  /** 行政区域/地点名称（用于台账与统计） */
+  /** 区县级行政区划名称（如「北京市密云区」），由后端逆地理写入；不按林场 */
   region?: string | null;
   /** 记录最后一次状态更新时间（台账用） */
   updated_at?: string;
@@ -70,6 +70,11 @@ export type FireDashboardData = {
 
 export type FireLedgerItem = {
   id: number;
+  /** 关联火点，便于前端用火点上的 region/坐标补全台账展示 */
+  marker_id?: number;
+  /** 可选：事件发生时快照坐标（无 marker_id 或主表无 region 时用于逆地理） */
+  longitude?: number;
+  latitude?: number;
   region: string;
   status: FireStatus;
   level: FireLevel;

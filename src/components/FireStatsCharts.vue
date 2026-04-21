@@ -2,96 +2,98 @@
   <div class="charts">
     <div class="chart" ref="causeEl" aria-label="火情成因占比图"></div>
     <div class="chart" ref="disposalEl" aria-label="火情处置情况占比图"></div>
-    <div class="chart wide" ref="regionEl" aria-label="各区域火情数量柱状图"></div>
+    <div class="chart wide" ref="regionEl" aria-label="区县火情数量前八柱状图"></div>
     <div class="chart wide" ref="trendEl" aria-label="近30天火情趋势柱状图"></div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { FireDashboardData } from '../api/types';
+import type { EChartsType } from 'echarts';
+
+type EchartsModule = typeof import('echarts');
+
+let echartsMod: EchartsModule | null = null;
+let echartsLoad: Promise<EchartsModule> | null = null;
+
+async function ensureEcharts(): Promise<EchartsModule> {
+  if (echartsMod) return echartsMod;
+  if (!echartsLoad) {
+    echartsLoad = import('echarts');
+  }
+  echartsMod = await echartsLoad;
+  return echartsMod;
+}
 
 const props = defineProps<{
   data: FireDashboardData | null;
 }>();
-
-type EChartsNamespace = any;
-declare global {
-  interface Window {
-    echarts?: EChartsNamespace;
-  }
-}
 
 const causeEl = ref<HTMLElement | null>(null);
 const disposalEl = ref<HTMLElement | null>(null);
 const regionEl = ref<HTMLElement | null>(null);
 const trendEl = ref<HTMLElement | null>(null);
 
-let causeChart: any = null;
-let disposalChart: any = null;
-let regionChart: any = null;
-let trendChart: any = null;
+let causeChart: EChartsType | null = null;
+let disposalChart: EChartsType | null = null;
+let regionChart: EChartsType | null = null;
+let trendChart: EChartsType | null = null;
 let ro: ResizeObserver | null = null;
 
-async function ensureECharts(): Promise<EChartsNamespace> {
-  if (window.echarts) return window.echarts;
-  await new Promise<void>((resolve, reject) => {
-    const existed = document.querySelector('script[data-echarts="true"]') as HTMLScriptElement | null;
-    if (existed) {
-      const timer = window.setInterval(() => {
-        if (window.echarts) {
-          clearInterval(timer);
-          resolve();
-        }
-      }, 50);
-      window.setTimeout(() => {
-        clearInterval(timer);
-        reject(new Error('ECharts 加载超时'));
-      }, 10000);
-      return;
-    }
-
-    const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js';
-    s.async = true;
-    s.dataset.echarts = 'true';
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error('ECharts 加载失败'));
-    document.head.appendChild(s);
-  });
-  if (!window.echarts) throw new Error('ECharts 未就绪');
-  return window.echarts;
-}
-
-function initCharts() {
-  const echarts = window.echarts;
-  if (!echarts) return;
+function initCharts(echarts: EchartsModule) {
   if (causeEl.value && !causeChart) causeChart = echarts.init(causeEl.value);
   if (disposalEl.value && !disposalChart) disposalChart = echarts.init(disposalEl.value);
   if (regionEl.value && !regionChart) regionChart = echarts.init(regionEl.value);
   if (trendEl.value && !trendChart) trendChart = echarts.init(trendEl.value);
 }
 
-function setOptions(d: FireDashboardData) {
-  const echarts = window.echarts;
-  if (!echarts) return;
+/** 按火点数量降序，仅取前 N 个区县展示 */
+function topRegionBar(bar: Array<{ name: string; value: number }>, limit = 8) {
+  return [...bar].sort((a, b) => b.value - a.value).slice(0, limit);
+}
+
+const pieLegend = {
+  type: 'scroll' as const,
+  orient: 'horizontal' as const,
+  left: 'center',
+  bottom: 2,
+  itemWidth: 10,
+  itemHeight: 10,
+  itemGap: 8,
+  pageButtonItemGap: 4,
+  pageIconSize: 10,
+  textStyle: { color: 'rgba(190,220,235,0.72)', fontSize: 10 }
+};
+
+const pieSeriesBase = {
+  type: 'pie' as const,
+  radius: ['32%', '52%'] as [string, string],
+  center: ['50%', '42%'] as [string, string],
+  avoidLabelOverlap: true,
+  label: { show: false },
+  labelLine: { show: false },
+  emphasis: {
+    label: { show: true, fontSize: 10, color: 'rgba(236,246,255,0.92)' }
+  },
+  itemStyle: { borderColor: 'rgba(6,14,22,0.45)', borderWidth: 2 }
+};
+
+function setOptions(echarts: EchartsModule, d: FireDashboardData) {
   const textColor = 'rgba(236,246,255,0.88)';
   const axisColor = 'rgba(190,220,235,0.55)';
   const gridLine = 'rgba(38,220,255,0.10)';
 
+  const regionTop = topRegionBar(d.region_bar || [], 8);
+
   causeChart?.setOption(
     {
-      title: { text: '火情成因占比', left: 10, top: 8, textStyle: { color: textColor, fontSize: 12 } },
-      tooltip: { trigger: 'item' },
-      legend: { bottom: 6, textStyle: { color: axisColor, fontSize: 10 } },
+      title: { text: '火情成因占比', left: 10, top: 6, textStyle: { color: textColor, fontSize: 12 } },
+      tooltip: { trigger: 'item', confine: true },
+      legend: pieLegend,
       series: [
         {
-          type: 'pie',
-          radius: ['38%', '66%'],
-          center: ['50%', '50%'],
-          avoidLabelOverlap: true,
-          label: { color: axisColor, fontSize: 10 },
-          itemStyle: { borderColor: 'rgba(6,14,22,0.4)', borderWidth: 2 },
+          ...pieSeriesBase,
           data: d.cause_pie
         }
       ]
@@ -104,19 +106,14 @@ function setOptions(d: FireDashboardData) {
       title: {
         text: '处置情况占比',
         left: 10,
-        top: 8,
+        top: 6,
         textStyle: { color: textColor, fontSize: 12 }
       },
-      tooltip: { trigger: 'item' },
-      legend: { bottom: 6, textStyle: { color: axisColor, fontSize: 10 } },
+      tooltip: { trigger: 'item', confine: true },
+      legend: pieLegend,
       series: [
         {
-          type: 'pie',
-          radius: ['38%', '66%'],
-          center: ['50%', '50%'],
-          avoidLabelOverlap: true,
-          label: { color: axisColor, fontSize: 10 },
-          itemStyle: { borderColor: 'rgba(6,14,22,0.4)', borderWidth: 2 },
+          ...pieSeriesBase,
           data: d.disposal_pie
         }
       ]
@@ -126,14 +123,19 @@ function setOptions(d: FireDashboardData) {
 
   regionChart?.setOption(
     {
-      title: { text: '各区域火情数量（北京周边）', left: 10, top: 8, textStyle: { color: textColor, fontSize: 12 } },
+      title: {
+        text: '区县火情数量前八',
+        left: 10,
+        top: 8,
+        textStyle: { color: textColor, fontSize: 12 }
+      },
       tooltip: { trigger: 'axis' },
-      grid: { left: 36, right: 14, top: 38, bottom: 28 },
+      grid: { left: 36, right: 14, top: 40, bottom: 32 },
       xAxis: {
         type: 'category',
-        axisLabel: { color: axisColor, fontSize: 10, interval: 0, rotate: 20 },
+        axisLabel: { color: axisColor, fontSize: 10, interval: 0, rotate: 22 },
         axisLine: { lineStyle: { color: gridLine } },
-        data: d.region_bar.map((x) => x.name)
+        data: regionTop.map((x) => x.name)
       },
       yAxis: {
         type: 'value',
@@ -143,7 +145,7 @@ function setOptions(d: FireDashboardData) {
       series: [
         {
           type: 'bar',
-          data: d.region_bar.map((x) => x.value),
+          data: regionTop.map((x) => x.value),
           barWidth: 14,
           itemStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
@@ -199,26 +201,32 @@ function resizeAll() {
 }
 
 onMounted(() => {
-  void ensureECharts().then(() => {
-    initCharts();
+  void (async () => {
+    const echarts = await ensureEcharts();
+    await nextTick();
+    initCharts(echarts);
     if (props.data) {
-      setOptions(props.data);
+      setOptions(echarts, props.data);
       resizeAll();
     }
-  });
-  ro = new ResizeObserver(() => resizeAll());
-  [causeEl.value, disposalEl.value, regionEl.value, trendEl.value].forEach((el) => {
-    if (el) ro?.observe(el);
-  });
+    ro = new ResizeObserver(() => resizeAll());
+    [causeEl.value, disposalEl.value, regionEl.value, trendEl.value].forEach((el) => {
+      if (el) ro?.observe(el);
+    });
+  })();
 });
 
 watch(
   () => props.data,
   (d) => {
     if (!d) return;
-    initCharts();
-    setOptions(d);
-    resizeAll();
+    void (async () => {
+      const echarts = await ensureEcharts();
+      await nextTick();
+      initCharts(echarts);
+      setOptions(echarts, d);
+      resizeAll();
+    })();
   },
   { immediate: true }
 );
@@ -242,7 +250,7 @@ onUnmounted(() => {
 }
 
 .chart {
-  height: 220px;
+  height: 248px;
   border-radius: 16px;
   border: 1px solid rgba(38, 220, 255, 0.12);
   background: rgba(6, 14, 22, 0.16);
