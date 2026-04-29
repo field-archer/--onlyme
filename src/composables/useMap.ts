@@ -190,7 +190,7 @@ export function useMap(mapContainer: Ref<HTMLElement | null>, mapOptions?: UseMa
       const AMap = await AMapLoader.load({
         key: jsapiKey,
         version: '2.0',
-        plugins: ['AMap.Scale', 'AMap.ToolBar', 'AMap.Geolocation']
+        plugins: ['AMap.Scale', 'AMap.ToolBar', 'AMap.Geolocation', 'AMap.MouseTool']
       });
 
       // 确保全局可用：HomeView/useMap 的覆盖物逻辑依赖 window.AMap

@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import MainView from '../views/MainView.vue';
 import MapView from '../views/HomeView.vue';
+import UavCoopView from '../views/UavCoopView.vue';
 import LoginView from '../views/LoginView.vue';
 import RegisterView from '../views/RegisterView.vue';
 
@@ -30,6 +31,12 @@ const router = createRouter({
       path: '/map',
       name: 'map',
       component: MapView,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/uav',
+      name: 'uav',
+      component: UavCoopView,
       meta: { requiresAuth: true }
     }
   ]

@@ -171,7 +171,7 @@ const SYNTHETIC_LEDGER_ID_BASE = 1_000_000_000;
 
 /**
  * 将「地图上已存在、但 fire-ledger 尚无对应事件」的火点补进台账列表（时间倒序合并）。
- * 若接口从未返回 marker_id，则无法与事件去重，为避免重复展示而不做合并（由后端写首条事件解决）。
+ * 去重：优先用台账行的 marker_id；若无 marker_id，则用台账行上的经纬度与火点坐标（coordKey）比对，避免「有台账但从不带 marker_id」时新火点永远不出现。
  */
 export async function mergeLedgerWithPendingMarkers(
   token: string,
@@ -179,15 +179,22 @@ export async function mergeLedgerWithPendingMarkers(
   markers: FireMarkerItem[],
   reporterFallback: string
 ): Promise<FireLedgerItem[]> {
-  const apiReturnsMarkerId = ledgerItems.some((it) => it.marker_id != null);
-  /** 台账有数据但接口从不带 marker_id 时无法与火点去重，避免重复行 */
-  if (ledgerItems.length > 0 && !apiReturnsMarkerId) return ledgerItems;
-
-  const inLedger = new Set(
+  const inLedgerById = new Set(
     ledgerItems.map((it) => it.marker_id).filter((x): x is number => x != null)
   );
 
-  const pending = markers.filter((m) => !inLedger.has(m.id));
+  const coordKeysFromLedger = new Set(
+    ledgerItems
+      .filter((it) => it.longitude != null && it.latitude != null)
+      .map((it) => coordKey(it.longitude as number, it.latitude as number))
+  );
+
+  const pending = markers.filter((m) => {
+    if (inLedgerById.has(m.id)) return false;
+    const mk = coordKey(m.longitude, m.latitude);
+    if (coordKeysFromLedger.has(mk)) return false;
+    return true;
+  });
   if (pending.length === 0) return ledgerItems;
 
   const needRegeo: Array<[number, number]> = [];

@@ -88,3 +88,70 @@ export type FireLedgerListData = {
   page: number;
   page_size: number;
 };
+
+export type UavMissionType = 'uav' | 'fleet';
+
+export type UavWaypoint = {
+  longitude: number;
+  latitude: number;
+  /** 仅无人机任务需要；单位：米 */
+  altitude?: number;
+  /**
+   * 后端/ROS 常用字段名：altitude_m（米）。
+   * 为兼容不同实现，前端发送任务时会优先使用 altitude_m。
+   */
+  altitude_m?: number;
+};
+
+export type UavMissionStartBody = {
+  mission_type: UavMissionType;
+  waypoints: UavWaypoint[];
+  /** 飞行速度挡位（由后端映射具体速度） */
+  speed_level?: 'low' | 'medium' | 'high';
+};
+
+export type UavMissionStartData = {
+  mission_id: string;
+};
+
+export type UavFlightStatus = 'flying' | 'hovering' | 'landed';
+
+export type UavTelemetryPayload = {
+  longitude: number;
+  latitude: number;
+  battery: number;
+  speed: number;
+  altitude: number;
+  roll: number;
+  pitch: number;
+  status: UavFlightStatus;
+  ts?: string;
+};
+
+/**
+ * WS `uav.detection` 的 payload（与 ROS/后端一致）。
+ * 前端在 `flame_count > 0` 且坐标有效等条件下 POST `/fire-markers` 并刷新火情台账。
+ */
+export type UavDetectionPayload = {
+  fire_probability: number;
+  risk_level: number;
+  flame_count: number;
+  average_confidence: number;
+  detected_target_count: number;
+  longitude: number;
+  latitude: number;
+  /** 后端兼容键：可直接用于 POST /fire-markers */
+  fire_count?: number;
+  /** 后端兼容键：可直接用于 POST /fire-markers */
+  level?: FireLevel;
+  /** 后端兼容键：可直接用于 POST /fire-markers */
+  cause?: FireCause;
+  fire_cause: FireCause;
+  /** 后端生成的 ISO8601 UTC，可选；用于展示/排序，标点去抖仍用本地时间 */
+  ts?: string;
+};
+
+export type FleetArrivedPayload = {
+  arrived: boolean;
+  ts?: string;
+};

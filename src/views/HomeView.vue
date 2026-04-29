@@ -17,6 +17,10 @@
           <div class="topbar-user-role">巡查员</div>
           <div class="topbar-user-name">{{ user.username }}</div>
         </div>
+        <button class="topbar-btn" type="button" @click="goToUav">
+          <span aria-hidden="true">🚁</span>
+          无人机协同
+        </button>
         <button class="topbar-btn" type="button" @click="goToMain">
           <span aria-hidden="true">🏠</span>
           主页
@@ -76,6 +80,16 @@
               <button class="ghost-btn" type="button" @click="locateMe" :disabled="!isMapLoaded">
                 <span aria-hidden="true">🧭</span>
                 定位
+              </button>
+            </div>
+            <div class="btn-grid">
+              <button class="ghost-btn warn" type="button" @click="startBoxDelete" :disabled="!isMapLoaded || boxDeleting">
+                <span aria-hidden="true">🧰</span>
+                {{ boxSelecting ? '框选中…' : '框选删除' }}
+              </button>
+              <button class="ghost-btn" type="button" @click="cancelBoxDelete" :disabled="!isMapLoaded || !boxSelecting || boxDeleting">
+                <span aria-hidden="true">✖</span>
+                取消
               </button>
             </div>
             <div class="level-row">
@@ -266,37 +280,7 @@
             <div class="glass-tag">日志</div>
           </div>
           <div class="glass-bd ledger-bd">
-            <div class="ledger-kpis">
-              <div class="ledger-kpi">
-                <div class="ledger-kpi-label">总记录</div>
-                <div class="ledger-kpi-value">{{ ledgerTotal }}</div>
-              </div>
-              <div class="ledger-kpi">
-                <div class="ledger-kpi-label">已加载</div>
-                <div class="ledger-kpi-value">{{ ledgerItems.length }}</div>
-              </div>
-              <div class="ledger-kpi">
-                <div class="ledger-kpi-label">状态</div>
-                <div class="ledger-kpi-value ok">{{ ledgerLoading ? '拉取中' : '就绪' }}</div>
-              </div>
-            </div>
-            <div class="ledger-scroll" role="list">
-              <div v-if="ledgerError" class="muted-note">{{ ledgerError }}</div>
-              <div v-else-if="ledgerLoading && ledgerItems.length === 0" class="muted-note">台账加载中…</div>
-              <div v-else-if="ledgerItems.length === 0" class="muted-note">暂无台账记录</div>
-              <div v-for="it in ledgerItems" :key="it.id" class="ledger-log" role="listitem">
-                <div class="ledger-log-top">
-                  <span v-if="it.id < 0" class="ledger-chip new-marker" title="尚未写入处置事件，由前端根据火点补显">新标记</span>
-                  <span class="ledger-chip level" :class="`lv-${it.level}`">等级：{{ levelText(it.level) }}</span>
-                  <span class="ledger-chip status" :class="`st-${it.status}`">{{ statusText(it.status) }}</span>
-                  <span class="ledger-time">{{ formatTime(it.updated_at) }}</span>
-                </div>
-                <div class="ledger-log-main">
-                  <div class="ledger-loc">{{ it.region }}</div>
-                  <div class="ledger-meta">护林员：{{ it.reporter_username }}</div>
-                </div>
-              </div>
-            </div>
+            <FireLedgerPanel :items="ledgerItems" :total="ledgerTotal" :loading="ledgerLoading" :error="ledgerError" />
           </div>
         </div>
       </section>
@@ -327,6 +311,7 @@ import { getFireDashboard } from '../api/fireDashboard';
 import { listFireLedger } from '../api/fireLedger';
 import FireStatsCharts from '../components/FireStatsCharts.vue';
 import FireMarkerEditDialog from '../components/FireMarkerEditDialog.vue';
+import FireLedgerPanel from '../components/FireLedgerPanel.vue';
 import type {
   FireCause,
   FireDashboardData,
@@ -335,7 +320,7 @@ import type {
   FireMarkerItem,
   FireStatus
 } from '../api/types';
-import { formatIsoTime, levelText, statusText } from '../utils/fire';
+import { formatIsoTime } from '../utils/fire';
 import {
   buildRegionBarFromMarkers,
   enrichLedgerItems,
@@ -403,6 +388,10 @@ const {
 const mapSurfaceAlert = computed(() => mapInitError.value || mapGeoHint.value);
 
 const markersSyncing = ref(false);
+const boxSelecting = ref(false);
+const boxDeleting = ref(false);
+let mouseTool: any | null = null;
+let mouseToolDrawHandler: ((e: any) => void) | null = null;
 
 function logoutAndHome() {
   logout();
@@ -605,6 +594,138 @@ async function removeFireMarkerFromDb() {
   }
 }
 
+function stopBoxSelect() {
+  // 无论地图是否存在，都先退出 UI 状态
+  boxSelecting.value = false;
+  if (!map.value) {
+    mouseToolDrawHandler = null;
+    mouseTool = null;
+    return;
+  }
+  try {
+    if (mouseTool && mouseToolDrawHandler) {
+      mouseTool.off?.('draw', mouseToolDrawHandler);
+    }
+  } catch {
+    /* ignore */
+  } finally {
+    mouseToolDrawHandler = null;
+  }
+  try {
+    // close(true) = 清除绘制中的覆盖物
+    mouseTool?.close?.(true);
+    // 某些情况下 close(true) 仍保留工具激活态，再补一次 close()
+    mouseTool?.close?.();
+  } catch {
+    /* ignore */
+  }
+  // 彻底释放工具实例，避免拖拽地图仍触发框选
+  mouseTool = null;
+}
+
+function cancelBoxDelete() {
+  stopBoxSelect();
+}
+
+function startBoxDelete() {
+  if (!map.value) {
+    alert('地图尚未加载完成，请稍后再试');
+    return;
+  }
+  if (boxDeleting.value) return;
+  const AMap = (window as any).AMap;
+  if (!AMap) {
+    alert('地图脚本尚未加载完成');
+    return;
+  }
+  if (!AMap.MouseTool) {
+    alert('缺少 MouseTool 插件，请刷新页面重试');
+    return;
+  }
+  // 确保不会叠加 draw 监听 & 清理上一次状态
+  stopBoxSelect();
+  // 每次进入框选都新建一个 MouseTool，避免残留状态
+  mouseTool = new AMap.MouseTool(map.value);
+  boxSelecting.value = true;
+
+  // 关闭其它模式，避免 click 冲突
+  if (isFireMarking.value) {
+    isFireMarking.value = false;
+    map.value.off('click', markFireOnMap);
+  }
+
+  mouseTool.rectangle({
+    fillColor: 'rgba(255, 176, 32, 0.12)',
+    fillOpacity: 0.22,
+    strokeColor: 'rgba(255, 176, 32, 0.85)',
+    strokeOpacity: 0.95,
+    strokeWeight: 2
+  });
+
+  // 每次绘制结束都会触发 draw 事件
+  mouseToolDrawHandler = async (e: any) => {
+    const rect = e?.obj;
+    const bounds = rect?.getBounds?.();
+    if (!bounds) {
+      rect?.remove?.();
+      stopBoxSelect();
+      return;
+    }
+    rect?.remove?.();
+    // 绘制完成立刻退出框选模式，避免工具残留
+    stopBoxSelect();
+
+    const t = token.value;
+    if (!t) {
+      alert('请先登录');
+      router.push({ name: 'login', query: { redirect: route.fullPath } });
+      return;
+    }
+
+    const AMap2 = (window as any).AMap;
+    const inIds: number[] = [];
+    for (const it of lastFireMarkers.value) {
+      const lng = Number(it.longitude);
+      const lat = Number(it.latitude);
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+      const p = new AMap2.LngLat(lng, lat);
+      if (bounds.contains(p)) {
+        inIds.push(it.id);
+      }
+    }
+
+    if (inIds.length === 0) {
+      alert('框选范围内没有火点');
+      return;
+    }
+
+    if (
+      !confirm(
+        `确定从数据库永久删除框选范围内的 ${inIds.length} 个火点？\n\n将逐条调用后端 DELETE /api/fire-markers/{id}，不可恢复。`
+      )
+    ) {
+      return;
+    }
+
+    boxDeleting.value = true;
+    try {
+      const results = await Promise.allSettled(inIds.map((id) => deleteFireMarker(t, id)));
+      const ok = results.filter((r) => r.status === 'fulfilled').length;
+      const fail = results.length - ok;
+      await refreshMarkers();
+      await Promise.all([refreshDashboard(), refreshLedger()]);
+      alert(fail === 0 ? `批量删除成功：${ok} 条` : `批量删除完成：成功 ${ok} 条，失败 ${fail} 条（请查看后端日志）`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '批量删除失败');
+    } finally {
+      boxDeleting.value = false;
+      // 再保险：删除完成后强制关闭工具
+      stopBoxSelect();
+    }
+  };
+  mouseTool.on('draw', mouseToolDrawHandler);
+}
+
 const markFireOnMap = async (event: any) => {
   if (!isFireMarking.value) return;
   const t = token.value;
@@ -721,6 +842,13 @@ const goToMain = () => {
   map.value?.off('click', markFireOnMap);
   resetSearchUi();
   router.push('/');
+};
+
+const goToUav = () => {
+  isFireMarking.value = false;
+  map.value?.off('click', markFireOnMap);
+  resetSearchUi();
+  router.push('/uav');
 };
 
 watch(isMapLoaded, (loaded) => {
@@ -849,6 +977,12 @@ onUnmounted(() => {
     clockTimer = null;
   }
   map.value?.off('click', markFireOnMap);
+  try {
+    stopBoxSelect();
+    mouseTool = null;
+  } catch {
+    /* ignore */
+  }
 });
 </script>
 

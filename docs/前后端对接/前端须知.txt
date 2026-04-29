@@ -49,7 +49,7 @@
 ========================
 
 1) map-config：`src/api/geo.ts` → `fetchGeoMapConfig`；`src/views/HomeView.vue` → `useMap(..., { fetchMapCredentials })`；`src/composables/useMap.ts` 在 `AMapLoader.load` 前设置 `_AMapSecurityConfig.securityJsCode`。未登录时仅允许用 `.env` 的 `VITE_AMAP_KEY` / `VITE_AMAP_SECURITY_CODE` 本地调试（见仓库根 `.env.example`）。
-2) 逆地理 50002：`src/utils/geoApiError.ts` 派发 `forestfire-geo-service`；`HomeView` 顶栏提示 + `regionEnrichment` 逆地理失败时触发；地名搜索失败同样 `notifyGeoServiceError`。
+2) 逆地理 50002：`src/utils/geoApiError.ts` 派发 `forestfire-geo-service`；HomeView 顶栏提示 + `regionEnrichment` 逆地理失败时触发；地名搜索失败同样 `notifyGeoServiceError`。
 3) place-search：仍为 `geoPlaceSearch`。
 4) PATCH 火点坐标：`src/api/fireMarkers.ts` 的 `updateFireMarker` body 已支持可选 `longitude`、`latitude`（须成对）。
 5) 台账：`mergeLedgerWithPendingMarkers` 等与 `接口汇总.txt` 一致。
